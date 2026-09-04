@@ -11,11 +11,13 @@
  * Creating a one-off consultation opens registration one hour before its
  * class time, exactly like the regular Wed/Fri schedule -- the row is
  * created right away (createConsultationIfAbsent), but the actual "claim +
- * broadcast" open only happens once that hour-before mark arrives
- * (openDueConsultations), whether that's immediately (if the curator picks
- * a time less than an hour out) or later, picked up by the same
- * once-a-minute safety-net cron tick that opens the regular schedule (see
- * db/consultations.ts's reconcile()). Cancelling reuses
+ * broadcast" open only happens once that hour-before mark arrives, which
+ * is either immediate (if the curator picks a time less than an hour out
+ * -- openDueConsultations catches it right here) or scheduled precisely
+ * via a Durable Object alarm (see ../../consultationOpener.ts) so it opens
+ * to the second rather than whenever the once-a-minute safety-net cron
+ * tick next happens to land (see db/consultations.ts's reconcile(), which
+ * stays as a backup in case that alarm is ever missed). Cancelling reuses
  * `deleteConsultation()` (db/consultations.ts) and the same Queues-backed
  * notification path as everything else in notify.ts, so a cancellation
  * broadcast to a large group is just as safe against the Workers
@@ -30,6 +32,7 @@
  * already signed up.
  */
 import { ADMIN_CONSULTATION_LEAD_MS, DEFAULT_CURATOR, DEFAULT_ROOM } from "../../config";
+import { cancelOpenAlarm, scheduleOpenAlarm } from "../../consultationOpener";
 import {
   activeSignupUserIds,
   createConsultationIfAbsent,
@@ -256,6 +259,11 @@ export async function confirmCreateConsultationYes(
     // queue message should see it reset to this (empty-so-far) queue
     // rather than keep showing the previous, now-irrelevant one.
     await enqueueQueueRefresh(env);
+  } else {
+    // Not due yet -- schedule the exact-time opening alarm (see
+    // consultationOpener.ts) instead of leaving this to whenever the next
+    // once-a-minute safety-net tick happens to land.
+    await scheduleOpenAlarm(env, consultationId, opensAt);
   }
 }
 
@@ -334,6 +342,10 @@ export async function executeCancelConsultation(
     await telegram.editMessageText(chatId, messageId, texts.NO_UPCOMING_CONSULTATIONS);
     return;
   }
+  // Harmless no-op for a regular Wed/Fri consultation (which never had an
+  // alarm scheduled in the first place) -- only actually cancels anything
+  // for an admin one-off whose opening alarm hadn't fired yet.
+  await cancelOpenAlarm(env, consultationId);
   await telegram.editMessageText(chatId, messageId, texts.consultationCancelledAdminConfirm(label));
   if (result.affectedUserIds.length > 0) {
     await enqueueConsultationCancelled(env, consultationId, result.affectedUserIds, label);

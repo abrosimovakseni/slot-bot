@@ -1,5 +1,6 @@
-import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
+import { createExecutionContext, env, runDurableObjectAlarm, runInDurableObject, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
+import { scheduleOpenAlarm } from "../src/consultationOpener";
 import { listUpcomingConsultations } from "../src/db/consultations";
 import { signupUser } from "../src/db/queue";
 import worker from "../src/index";
@@ -121,6 +122,14 @@ describe("admin: create a one-off consultation end-to-end", () => {
     expect(row!.finalized_at).toBeNull();
     expect(row!.curator).toBe("Любовь Котлярова");
     expect(row!.room).toBe("332");
+
+    // Not opened immediately -- confirmCreateConsultationYes must have
+    // scheduled the exact-time opening alarm instead (see
+    // src/consultationOpener.ts), for exactly the row's own opens_at.
+    const openerId = env.CONSULTATION_OPENER.idFromName(String(row!.id));
+    const stub = env.CONSULTATION_OPENER.get(openerId);
+    const alarmTime = await runInDurableObject(stub, (_instance, state) => state.storage.getAlarm());
+    expect(alarmTime).toBe(new Date(row!.registration_opens_at).getTime());
   });
 
   it("add -> type a datetime -> 'Указать другое' -> type curator and room -> confirm creates it with those values", async () => {
@@ -259,6 +268,19 @@ describe("admin: cancel a consultation end-to-end", () => {
 
     const upcoming = await listUpcomingConsultations(env);
     expect(upcoming.map((c) => c.id)).not.toContain(consultationId);
+  });
+
+  it("cancelling a consultation also cancels its exact-time opening alarm, if it had one", async () => {
+    const consultationId = await createOpenConsultation(env, "С будильником");
+    await scheduleOpenAlarm(env, consultationId, new Date(Date.now() + 60_000));
+
+    await post(webhookCallback(ADMIN_ID, `admin_cancel_pick:${consultationId}`));
+    await post(webhookCallback(ADMIN_ID, `admin_cancel_yes:${consultationId}`));
+
+    const openerId = env.CONSULTATION_OPENER.idFromName(String(consultationId));
+    const stub = env.CONSULTATION_OPENER.get(openerId);
+    const ran = await runDurableObjectAlarm(stub);
+    expect(ran).toBe(false); // cancelled -- nothing left scheduled to run
   });
 
   it("cancelling an already-cancelled (or nonexistent) consultation id is a safe no-op", async () => {

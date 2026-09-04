@@ -49,6 +49,26 @@ export async function createOpenConsultation(env: Env, label = "Test"): Promise<
   return result.meta.last_row_id as number;
 }
 
+/** Creates a consultation that is due to open (registration_opens_at already
+ * in the past) but hasn't been claimed/broadcast yet (opened_notified_at is
+ * NULL) -- the exact state the safety-net sweep and the ConsultationOpener
+ * Durable Object alarm are each racing to claim. Distinct from
+ * createOpenConsultation(), which simulates an already-broadcast, currently
+ * open consultation (opened_notified_at already set). */
+export async function createDueUnopenedConsultation(env: Env, label = "Test"): Promise<number> {
+  const now = Date.now() + reserveConsultationOffset();
+  const opensAt = new Date(now - 60_000).toISOString();
+  const scheduledAt = new Date(now + 3_600_000).toISOString();
+  const createdAt = new Date(now).toISOString();
+  const result = await env.DB.prepare(
+    `INSERT INTO consultations (label, scheduled_at, registration_opens_at, created_at)
+     VALUES (?, ?, ?, ?)`,
+  )
+    .bind(label, scheduledAt, opensAt, createdAt)
+    .run();
+  return result.meta.last_row_id as number;
+}
+
 /** Creates a consultation whose registration has not opened yet. */
 export async function createUnopenedConsultation(env: Env, label = "Test"): Promise<number> {
   const now = Date.now() + reserveConsultationOffset();

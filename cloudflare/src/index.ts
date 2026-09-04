@@ -20,6 +20,10 @@ import { TelegramClient } from "./telegram";
 import type { Env, NotifyMessage } from "./types";
 import type { TelegramUpdate } from "./telegram";
 
+// Re-exported so wrangler can find the class named in wrangler.toml's
+// `durable_objects` binding -- see consultationOpener.ts's doc comment.
+export { ConsultationOpener } from "./consultationOpener";
+
 const WEBHOOK_PATH = "/webhook";
 
 async function notifyAdmin(env: Env, message: string): Promise<void> {

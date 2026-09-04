@@ -1,5 +1,7 @@
 /** Worker environment bindings + row shapes shared across modules. */
 
+import type { ConsultationOpener } from "./consultationOpener";
+
 export type NotifyMessage =
   | {
       kind: "opening";
@@ -45,6 +47,10 @@ export type NotifyMessage =
 export interface Env {
   DB: D1Database;
   NOTIFY_QUEUE: Queue<NotifyMessage>;
+  /** One instance per admin one-off consultation -- see
+   * consultationOpener.ts's doc comment for why this exists (exact-time
+   * registration opening, free-tier SQLite-backed Durable Objects). */
+  CONSULTATION_OPENER: DurableObjectNamespace<ConsultationOpener>;
   BOT_TOKEN: string;
   WEBHOOK_SECRET: string;
   ADMIN_ID?: string;

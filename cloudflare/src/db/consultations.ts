@@ -31,6 +31,7 @@
  * called by the cron triggers (see index.ts). No in-memory state is ever
  * relied on; the source of truth is always D1.
  */
+import { enqueueOpeningBroadcast, enqueueQueueRefresh } from "../notify";
 import { toggleStatus } from "../queueLogic";
 import { allWeekOccurrences, moscowDateKey } from "../timeUtils";
 import type { ConsultationRow, Env, PriorityStatus } from "../types";
@@ -256,6 +257,46 @@ export async function openDueConsultations(env: Env, now: Date = new Date()): Pr
     }
   }
   return opened;
+}
+
+/**
+ * Atomically opens ONE specific consultation, if it's actually due and not
+ * already opened/finalized, and -- unlike openDueConsultations() above --
+ * broadcasts the opening itself instead of leaving that to the caller.
+ * This is the exact-time counterpart to that sweep: it's what
+ * ConsultationOpener's alarm() (see ../consultationOpener.ts) calls at
+ * precisely a consultation's registration_opens_at instant, so an admin
+ * one-off consultation (bot/handlers/admin.ts) opens to the second instead
+ * of waiting for the next once-a-minute safety-net tick. The regular
+ * Wed/Fri schedule doesn't need this: its own precise 09:30 MSK cron
+ * trigger IS its opens_at moment, so it already opens exactly on time via
+ * reconcile()'s phase 2.
+ *
+ * Uses the exact same atomic claim (`UPDATE ... WHERE opened_notified_at
+ * IS NULL`) as everywhere else in this file, so this alarm firing at
+ * (nearly) the same moment as the safety-net sweep can never double-open
+ * or double-broadcast the same consultation -- whichever claims first
+ * wins, the other affects zero rows and is a safe no-op. Likewise, if the
+ * consultation was cancelled (deleted) before the alarm fires, the claim
+ * affects zero rows and nothing is broadcast.
+ */
+export async function openOneConsultationNow(env: Env, consultationId: number, now: Date = new Date()): Promise<void> {
+  const nowIso = now.toISOString();
+  const claim = await env.DB.prepare(
+    "UPDATE consultations SET opened_notified_at = ? WHERE id = ? AND opened_notified_at IS NULL AND finalized_at IS NULL AND registration_opens_at <= ?",
+  )
+    .bind(nowIso, consultationId, nowIso)
+    .run();
+  if ((claim.meta.changes ?? 0) !== 1) return;
+
+  const consultation = await getConsultation(env, consultationId);
+  if (consultation !== null) {
+    await enqueueOpeningBroadcast(env, consultation);
+    // A new consultation just became "current" -- anyone with a pinned
+    // queue message should see it reset to this (empty-so-far) queue
+    // rather than keep showing the previous, now-irrelevant one.
+    await enqueueQueueRefresh(env);
+  }
 }
 
 // ---------------------------------------------------------------------------

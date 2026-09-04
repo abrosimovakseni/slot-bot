@@ -33,6 +33,21 @@ max_retries = 5
 dead_letter_queue = "slot-notify-dlq"
 
 # ---------------------------------------------------------------------------
+# Durable Objects -- one instance per admin one-off consultation, used only
+# to fire a precise setAlarm() at that consultation's exact
+# registration_opens_at instant (see src/consultationOpener.ts's doc
+# comment for the full why). SQLite-backed Durable Objects are included in
+# the Workers Free plan, same as everything else here.
+# ---------------------------------------------------------------------------
+[[durable_objects.bindings]]
+name = "CONSULTATION_OPENER"
+class_name = "ConsultationOpener"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ConsultationOpener"]
+
+# ---------------------------------------------------------------------------
 # Cron Triggers -- all in UTC (Cloudflare Cron Triggers do not support named
 # timezones). Europe/Moscow is UTC+3 year-round (Russia has not observed DST
 # since 2014), so the offset is fixed and never needs seasonal adjustment.
@@ -40,16 +55,17 @@ dead_letter_queue = "slot-notify-dlq"
 #   "30 6 * * 3"  Wednesday 09:30 Europe/Moscow (06:30 UTC) -- prompt open
 #   "30 6 * * 5"  Friday    09:30 Europe/Moscow (06:30 UTC) -- prompt open
 #   "* * * * *"   safety-net reconcile, every minute, every day -- finalizes
-#                 past-due consultations and catches up on any opening the
-#                 two precise triggers above (or an admin one-off
-#                 consultation's own hour-before mark) might have missed
-#                 (a deploy mid-window, a transient error, etc.), using the
-#                 exact same idempotent reconcile() logic either way. Runs
-#                 this often specifically so an admin one-off consultation's
-#                 registration opens within about a minute of its due time,
-#                 not up to 15 -- each tick is a handful of small, cheap D1
-#                 reads (a no-op unless something's actually due), well
-#                 within the free tier at 1,440 invocations/day.
+#                 past-due consultations, and is the BACKUP path for opening
+#                 (the ConsultationOpener Durable Object above is the
+#                 primary path for an admin one-off consultation's exact
+#                 opening moment; this sweep only ends up doing the work if
+#                 that alarm is ever missed). Also still the only path for
+#                 catching up a deploy mid-window or a transient error on
+#                 the two precise triggers above, using the exact same
+#                 idempotent reconcile() logic either way. Each tick is a
+#                 handful of small, cheap D1 reads (a no-op unless
+#                 something's actually due), well within the free tier at
+#                 1,440 invocations/day.
 # ---------------------------------------------------------------------------
 [triggers]
 crons = ["30 6 * * 3", "30 6 * * 5", "* * * * *"]
