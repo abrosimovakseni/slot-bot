@@ -133,6 +133,41 @@ async def test_reconcile_called_repeatedly_never_duplicates(session_factory):
     assert await _count_consultations(session_factory) == 1
 
 
+async def test_reconcile_after_class_time_same_day_creates_nothing(session_factory):
+    # Regression test: if the bot's very first reconcile for a given slot
+    # happens on the class's own day but AFTER the class time (10:30) has
+    # already passed -- e.g. the bot is deployed for the first time at
+    # 15:00 on a Friday -- it must not manufacture that consultation.
+    # Nobody could have signed up for a class that's already over; the
+    # existing calendar-day bound above only caught *entirely* skipped
+    # days, not this same-day-but-too-late case.
+    fri_date = _some_date_on_weekday(FRI.weekday)
+    now = datetime.datetime.combine(fri_date, datetime.time(15, 0), tzinfo=MOSCOW_TZ).astimezone(
+        datetime.timezone.utc
+    )
+    report = await reconcile(session_factory, now=now)
+    assert report.opened == []
+    assert await _count_consultations(session_factory) == 0
+
+
+async def test_reconcile_still_finishes_opening_existing_slot_after_class_time(session_factory):
+    # The same-day-too-late bound must only block *creating* a brand-new
+    # row -- if a consultation was already created earlier that day (e.g.
+    # the bot crashed right after creating it but before broadcasting), a
+    # later-in-the-day reconcile must still recognize and finish opening it.
+    fri_date = _some_date_on_weekday(FRI.weekday)
+    open_time = datetime.datetime.combine(fri_date, datetime.time(9, 30), tzinfo=MOSCOW_TZ).astimezone(
+        datetime.timezone.utc
+    )
+    first = await reconcile(session_factory, now=open_time)
+    assert len(first.opened) == 1
+
+    later = open_time + datetime.timedelta(hours=6)  # 15:30 MSK, well after 10:30 class time
+    second = await reconcile(session_factory, now=later)
+    assert second.opened == []  # already open -- nothing new, but not an error either
+    assert await _count_consultations(session_factory) == 1
+
+
 async def test_new_consultation_after_finalize_starts_with_empty_queue(session_factory):
     # TEST 21: after the previous consultation is auto-finalized, a newly
     # created consultation's queue is empty regardless of history.

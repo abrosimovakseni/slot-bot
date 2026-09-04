@@ -197,10 +197,25 @@ async def reconcile(
     #     creating that slot, it's simply skipped -- correct, since a
     #     consultation students could never have signed up for is not
     #     worth manufacturing after the fact.
+    #
+    # A third, finer-grained bound applies only to brand-new rows: if this
+    # exact slot has never been created yet AND the class time itself
+    # (`scheduled_at`) has already passed today, don't manufacture it either
+    # -- e.g. the bot's very first-ever startup happening at 15:00 on a
+    # Friday must not open registration for the 10:30 class that already
+    # happened that same morning. This does NOT apply once a row already
+    # exists (a mid-day restart must still recognize and, if needed,
+    # finish opening a consultation it created earlier that same day).
     for entry, scheduled_at, opens_at in all_week_occurrences(now):
         if now < opens_at:
             continue
         if now.astimezone(MOSCOW_TZ).date() > scheduled_at.astimezone(MOSCOW_TZ).date():
+            continue
+        async with session_factory() as session:
+            already_exists = await session.scalar(
+                select(Consultation.id).where(Consultation.scheduled_at == scheduled_at)
+            )
+        if already_exists is None and now >= scheduled_at:
             continue
         async with session_factory() as session:
             er = await ensure_created_and_opened(session, entry, scheduled_at, opens_at)
