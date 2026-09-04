@@ -74,11 +74,17 @@ export const INVALID_DATETIME =
 export const DATETIME_IN_PAST = "Эта дата и время уже в прошлом. Введи другое значение.";
 
 export function confirmCreateConsultation(label: string): string {
-  return `Создать консультацию на ${label} (мск) и сразу открыть запись?`;
+  return `Создать консультацию на ${label} (мск)? Запись откроется за час до начала, как обычно.`;
 }
 
-export function consultationCreated(label: string): string {
-  return `✅ Консультация на ${label} создана и открыта для записи.`;
+/** `opensAtLabel` is null when registration is due right away (the 1-hour
+ * mark has already passed by the time the curator confirmed creation) --
+ * otherwise it's the "DD.MM.YYYY HH:MM" moment registration will open. */
+export function consultationCreated(label: string, opensAtLabel: string | null): string {
+  if (opensAtLabel === null) {
+    return `✅ Консультация на ${label} создана и уже открыта для записи.`;
+  }
+  return `✅ Консультация на ${label} создана. Запись откроется ${opensAtLabel} (мск).`;
 }
 
 export const NO_UPCOMING_CONSULTATIONS = "Нет предстоящих консультаций.";

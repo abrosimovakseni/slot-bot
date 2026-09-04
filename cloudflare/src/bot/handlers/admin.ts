@@ -7,17 +7,27 @@
  * button that leads here is also just a label anyone could in principle
  * type.
  *
- * Creating a one-off consultation reuses `ensureCreatedAndOpened()` --
- * exactly the same idempotent create-and-open path the Wed/Fri cron uses,
- * just invoked manually instead of from `scheduled()` -- with registration
- * opened immediately (there's no "wait until 09:30" concept for an ad-hoc
- * slot the curator is adding right now). Cancelling reuses
+ * Creating a one-off consultation opens registration one hour before its
+ * class time, exactly like the regular Wed/Fri schedule -- the row is
+ * created right away (createConsultationIfAbsent), but the actual "claim +
+ * broadcast" open only happens once that hour-before mark arrives
+ * (openDueConsultations), whether that's immediately (if the curator picks
+ * a time less than an hour out) or later, picked up by the same 15-minute
+ * safety-net cron tick that opens the regular schedule (see
+ * db/consultations.ts's reconcile()). Cancelling reuses
  * `deleteConsultation()` (db/consultations.ts) and the same Queues-backed
  * notification path as everything else in notify.ts, so a cancellation
  * broadcast to a large group is just as safe against the Workers
  * subrequest limit as the opening broadcast is.
  */
-import { getConsultation, deleteConsultation, ensureCreatedAndOpened, listUpcomingConsultations } from "../../db/consultations";
+import { ADMIN_CONSULTATION_LEAD_MS } from "../../config";
+import {
+  createConsultationIfAbsent,
+  deleteConsultation,
+  getConsultation,
+  listUpcomingConsultations,
+  openDueConsultations,
+} from "../../db/consultations";
 import { clearState, getState, setState } from "../../db/state";
 import { enqueueConsultationCancelled, enqueueOpeningBroadcast, enqueueQueueRefresh } from "../../notify";
 import {
@@ -95,11 +105,22 @@ export async function confirmCreateConsultationYes(
   await clearState(env, telegramUserId);
 
   const label = formatMoscowDateTime(scheduledAt);
-  const result = await ensureCreatedAndOpened(env, label, scheduledAt, new Date());
-  await telegram.editMessageText(chatId, messageId, texts.consultationCreated(label));
+  const opensAt = new Date(scheduledAt.getTime() - ADMIN_CONSULTATION_LEAD_MS);
+  const { consultationId } = await createConsultationIfAbsent(env, label, scheduledAt, opensAt);
 
-  if (result.justOpened) {
-    const consultation = await getConsultation(env, result.consultationId);
+  // If the hour-before mark has already arrived (the curator picked a time
+  // less than an hour out), open it right now instead of waiting for the
+  // next 15-minute safety-net tick.
+  const opened = await openDueConsultations(env, new Date());
+  const justOpened = opened.some((o) => o.consultationId === consultationId);
+  await telegram.editMessageText(
+    chatId,
+    messageId,
+    texts.consultationCreated(label, justOpened ? null : formatMoscowDateTime(opensAt)),
+  );
+
+  if (justOpened) {
+    const consultation = await getConsultation(env, consultationId);
     if (consultation !== null) {
       await enqueueOpeningBroadcast(env, consultation);
     }

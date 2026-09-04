@@ -160,6 +160,89 @@ export async function ensureCreatedAndOpened(
   return { consultationId, created, justOpened };
 }
 
+export interface CreateResult {
+  consultationId: number;
+  created: boolean;
+}
+
+/**
+ * Admin one-off consultations (see bot/handlers/admin.ts): creates the row
+ * now (same idempotent insert as ensureCreatedAndOpened above), but leaves
+ * it unopened -- registration opens automatically later, exactly like the
+ * regular Wed/Fri schedule, once `registration_opens_at` (normally one
+ * hour before class -- config.ADMIN_CONSULTATION_LEAD_MS) actually
+ * arrives. See openDueConsultations() below for the "open when due" half.
+ */
+export async function createConsultationIfAbsent(
+  env: Env,
+  label: string,
+  scheduledAt: Date,
+  opensAt: Date,
+): Promise<CreateResult> {
+  const scheduledIso = scheduledAt.toISOString();
+  const opensIso = opensAt.toISOString();
+  const nowIso = new Date().toISOString();
+
+  const insert = await env.DB.prepare(
+    `INSERT INTO consultations (label, scheduled_at, registration_opens_at, created_at)
+     SELECT ?, ?, ?, ?
+     WHERE NOT EXISTS (SELECT 1 FROM consultations WHERE scheduled_at = ?)`,
+  )
+    .bind(label, scheduledIso, opensIso, nowIso, scheduledIso)
+    .run();
+
+  let consultationId: number;
+  const created = (insert.meta.changes ?? 0) === 1;
+  if (created) {
+    consultationId = insert.meta.last_row_id as number;
+  } else {
+    const row = await env.DB.prepare("SELECT id FROM consultations WHERE scheduled_at = ?")
+      .bind(scheduledIso)
+      .first<{ id: number }>();
+    consultationId = row!.id;
+  }
+  return { consultationId, created };
+}
+
+export interface OpenedConsultation {
+  consultationId: number;
+}
+
+/**
+ * Opens every not-yet-finalized, not-yet-opened consultation whose
+ * registration_opens_at has arrived -- the generic "claim + open" half of
+ * ensureCreatedAndOpened, without the "create if missing" half, so it
+ * applies uniformly to rows regardless of how they were created: the
+ * regular Wed/Fri reconcile() path below, or an admin one-off
+ * (createConsultationIfAbsent above). Each open is claimed atomically
+ * (same UPDATE...WHERE opened_notified_at IS NULL pattern used everywhere
+ * else in this file), so calling this repeatedly -- the 15-minute
+ * safety-net tick, or an immediate check right after an admin creates a
+ * consultation whose opening time has already arrived -- never re-opens
+ * or re-broadcasts the same consultation twice.
+ */
+export async function openDueConsultations(env: Env, now: Date = new Date()): Promise<OpenedConsultation[]> {
+  const nowIso = now.toISOString();
+  const { results: due } = await env.DB.prepare(
+    "SELECT id FROM consultations WHERE opened_notified_at IS NULL AND finalized_at IS NULL AND registration_opens_at <= ?",
+  )
+    .bind(nowIso)
+    .all<{ id: number }>();
+
+  const opened: OpenedConsultation[] = [];
+  for (const { id } of due) {
+    const claim = await env.DB.prepare(
+      "UPDATE consultations SET opened_notified_at = ? WHERE id = ? AND opened_notified_at IS NULL",
+    )
+      .bind(nowIso, id)
+      .run();
+    if ((claim.meta.changes ?? 0) === 1) {
+      opened.push({ consultationId: id });
+    }
+  }
+  return opened;
+}
+
 // ---------------------------------------------------------------------------
 // Reconciliation (restart recovery + safety-net polling)
 // ---------------------------------------------------------------------------
@@ -214,6 +297,17 @@ export async function reconcile(env: Env, now: Date = new Date()): Promise<Recon
     if (er.created || er.justOpened) {
       report.opened.push(er);
     }
+  }
+
+  // 3. Open anything else that's due but wasn't touched above -- in
+  // practice, admin one-off consultations (see
+  // bot/handlers/admin.ts / createConsultationIfAbsent), which phase 2
+  // above doesn't know about since they're not part of the fixed weekly
+  // schedule. A weekly-schedule row phase 2 already opened this same call
+  // is never re-reported here, since its opened_notified_at is no longer
+  // NULL by the time this query runs.
+  for (const { consultationId } of await openDueConsultations(env, now)) {
+    report.opened.push({ consultationId, created: false, justOpened: true });
   }
 
   return report;

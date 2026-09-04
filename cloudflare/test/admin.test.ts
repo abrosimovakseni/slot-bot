@@ -5,6 +5,7 @@ import { signupUser } from "../src/db/queue";
 import worker from "../src/index";
 import { isAdmin } from "../src/bot/handlers/admin";
 import { BTN_ADMIN } from "../src/bot/texts";
+import { formatMoscowDateTime } from "../src/timeUtils";
 import type { UserStateRow } from "../src/types";
 import { createOpenConsultation, makeUser } from "./helpers";
 
@@ -80,7 +81,7 @@ describe("admin menu access control", () => {
 });
 
 describe("admin: create a one-off consultation end-to-end", () => {
-  it("add -> type datetime -> confirm creates and opens a consultation", async () => {
+  it("add -> type a far-future datetime -> confirm creates it unopened, registration due one hour before class", async () => {
     await post(webhookCallback(ADMIN_ID, "admin_add_start"));
     let state = await getUserState(ADMIN_ID);
     expect(state?.flow).toBe("admin_add");
@@ -98,10 +99,37 @@ describe("admin: create a one-off consultation end-to-end", () => {
       "SELECT * FROM consultations WHERE scheduled_at = ?",
     )
       .bind("2030-09-20T12:00:00.000Z")
-      .first<{ id: number; opened_notified_at: string | null; finalized_at: string | null }>();
+      .first<{
+        id: number;
+        registration_opens_at: string;
+        opened_notified_at: string | null;
+        finalized_at: string | null;
+      }>();
     expect(row).not.toBeNull();
-    expect(row!.opened_notified_at).not.toBeNull(); // opened immediately, no waiting for a cron
+    // Not open yet -- this is 2030, registration only opens one hour before
+    // the 15:00 MSK class, i.e. 11:00 UTC, same lead time as the regular
+    // Wed/Fri schedule (see config.ADMIN_CONSULTATION_LEAD_MS).
+    expect(row!.registration_opens_at).toBe("2030-09-20T11:00:00.000Z");
+    expect(row!.opened_notified_at).toBeNull();
     expect(row!.finalized_at).toBeNull();
+  });
+
+  it("creating one for less than an hour from now opens it immediately, same as before", async () => {
+    await post(webhookCallback(ADMIN_ID, "admin_add_start"));
+    const soon = new Date(Date.now() + 20 * 60_000); // 20 minutes out -- inside the 1-hour lead window
+    // Build the "DD.MM.YYYY HH:MM" (Moscow) text the same way the curator
+    // would type it, using the same helper the app itself uses to render
+    // dates back to her.
+    const text = formatMoscowDateTime(soon);
+
+    await post(webhookMessage(ADMIN_ID, text));
+    await post(webhookCallback(ADMIN_ID, "admin_create_yes"));
+
+    const row = await env.DB.prepare("SELECT opened_notified_at FROM consultations WHERE label = ?")
+      .bind(text)
+      .first<{ opened_notified_at: string | null }>();
+    expect(row).not.toBeNull();
+    expect(row!.opened_notified_at).not.toBeNull(); // due already -- opened right away, no waiting for a cron
   });
 
   it("an invalid datetime is rejected and the flow stays at ASK_DATETIME", async () => {

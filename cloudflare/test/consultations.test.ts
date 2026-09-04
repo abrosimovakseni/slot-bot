@@ -2,10 +2,12 @@ import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { WEEKLY_SCHEDULE } from "../src/config";
 import {
+  createConsultationIfAbsent,
   deleteConsultation,
   ensureCreatedAndOpened,
   finalizeConsultation,
   listUpcomingConsultations,
+  openDueConsultations,
   reconcile,
 } from "../src/db/consultations";
 import { getQueueView, signupUser } from "../src/db/queue";
@@ -247,5 +249,73 @@ describe("admin: listUpcomingConsultations / deleteConsultation", () => {
     const result = await deleteConsultation(env, created.consultationId);
     expect(result.existed).toBe(true);
     expect(result.affectedUserIds).toEqual([]);
+  });
+});
+
+describe("admin one-off consultations: createConsultationIfAbsent / openDueConsultations", () => {
+  it("createConsultationIfAbsent creates the row but leaves it unopened, even if registration_opens_at is already in the past", async () => {
+    const scheduledAt = new Date("2031-06-11T12:00:00.000Z");
+    const opensAt = new Date("2031-06-11T11:00:00.000Z"); // 1 hour before
+    const result = await createConsultationIfAbsent(env, "Доп. 11.06.2031", scheduledAt, opensAt);
+    expect(result.created).toBe(true);
+
+    const row = await env.DB.prepare("SELECT registration_opens_at, opened_notified_at FROM consultations WHERE id = ?")
+      .bind(result.consultationId)
+      .first<{ registration_opens_at: string; opened_notified_at: string | null }>();
+    expect(row!.registration_opens_at).toBe(opensAt.toISOString());
+    expect(row!.opened_notified_at).toBeNull(); // NOT opened by createConsultationIfAbsent itself
+  });
+
+  it("calling createConsultationIfAbsent again for the same scheduled_at is a no-op that returns the same id", async () => {
+    const scheduledAt = new Date("2031-06-12T12:00:00.000Z");
+    const opensAt = new Date("2031-06-12T11:00:00.000Z");
+    const first = await createConsultationIfAbsent(env, "Доп. 12.06.2031", scheduledAt, opensAt);
+    const second = await createConsultationIfAbsent(env, "Доп. 12.06.2031 (again)", scheduledAt, opensAt);
+    expect(second.created).toBe(false);
+    expect(second.consultationId).toBe(first.consultationId);
+  });
+
+  it("openDueConsultations opens a row whose registration_opens_at has arrived, and is idempotent on repeat calls", async () => {
+    const scheduledAt = new Date("2031-06-13T12:00:00.000Z");
+    const opensAt = new Date("2031-06-13T11:00:00.000Z");
+    const { consultationId } = await createConsultationIfAbsent(env, "Доп. 13.06.2031", scheduledAt, opensAt);
+
+    // Not due yet.
+    const tooEarly = await openDueConsultations(env, new Date("2031-06-13T10:59:00.000Z"));
+    expect(tooEarly.map((o) => o.consultationId)).not.toContain(consultationId);
+
+    // Due now.
+    const due = await openDueConsultations(env, new Date("2031-06-13T11:00:00.000Z"));
+    expect(due.map((o) => o.consultationId)).toContain(consultationId);
+    const row = await env.DB.prepare("SELECT opened_notified_at FROM consultations WHERE id = ?")
+      .bind(consultationId)
+      .first<{ opened_notified_at: string | null }>();
+    expect(row!.opened_notified_at).not.toBeNull();
+
+    // Calling again never re-opens (and thus never re-broadcasts) it.
+    const again = await openDueConsultations(env, new Date("2031-06-13T11:05:00.000Z"));
+    expect(again.map((o) => o.consultationId)).not.toContain(consultationId);
+  });
+
+  it("openDueConsultations never opens an already-finalized consultation", async () => {
+    const scheduledAt = new Date("2031-06-14T12:00:00.000Z");
+    const opensAt = new Date("2031-06-14T11:00:00.000Z");
+    const { consultationId } = await createConsultationIfAbsent(env, "Доп. 14.06.2031", scheduledAt, opensAt);
+    await finalizeConsultation(env, consultationId); // e.g. an admin cancelled it before it ever opened -- see deleteConsultation for the real path; this just needs finalized_at set
+
+    const due = await openDueConsultations(env, new Date("2031-06-14T11:00:00.000Z"));
+    expect(due.map((o) => o.consultationId)).not.toContain(consultationId);
+  });
+
+  it("reconcile()'s safety-net tick opens an admin one-off consultation once its hour-before mark arrives", async () => {
+    const scheduledAt = new Date("2031-06-18T12:00:00.000Z"); // a Wednesday, but this is an ad-hoc row, not the weekly one
+    const opensAt = new Date("2031-06-18T11:00:00.000Z");
+    const { consultationId } = await createConsultationIfAbsent(env, "Доп. 18.06.2031", scheduledAt, opensAt);
+
+    const before = await reconcile(env, new Date("2031-06-18T10:00:00.000Z"));
+    expect(before.opened.map((o) => o.consultationId)).not.toContain(consultationId);
+
+    const after = await reconcile(env, new Date("2031-06-18T11:15:00.000Z"));
+    expect(after.opened.map((o) => o.consultationId)).toContain(consultationId);
   });
 });
