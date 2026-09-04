@@ -99,6 +99,18 @@ export function formatMoscowDateTime(date: Date): string {
   return `${dd}.${mm}.${yyyy} ${hh}:${min}`;
 }
 
+/**
+ * "HH:MM" for the Europe/Moscow wall-clock time of `date` -- used wherever
+ * only the class start time matters, not the full date (the opening
+ * broadcast, the queue header -- see bot/texts.ts's queueHeader()).
+ */
+export function formatMoscowTime(date: Date): string {
+  const shifted = toMoscowShifted(date);
+  const hh = String(shifted.getUTCHours()).padStart(2, "0");
+  const min = String(shifted.getUTCMinutes()).padStart(2, "0");
+  return `${hh}:${min}`;
+}
+
 const MOSCOW_DATETIME_RE = /^(\d{1,2})\.(\d{1,2})\.(\d{4})[ ,T]+(\d{1,2}):(\d{2})$/;
 
 /**

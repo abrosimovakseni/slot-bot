@@ -31,6 +31,7 @@ import { consultationCancelled, detailsChanged, openingBroadcast, positionChange
 import { markBlocked, pinnedQueueViewerIds } from "./db/users";
 import { refreshPinnedQueueMessageForUser } from "./pinnedQueue";
 import { signupInlineKeyboard, TelegramClient } from "./telegram";
+import { formatMoscowTime } from "./timeUtils";
 import type { ConsultationRow, Env, NotifyMessage } from "./types";
 
 const CHUNK_SIZE = 100; // Cloudflare Queues sendBatch() cap per call.
@@ -45,7 +46,7 @@ export async function enqueueOpeningBroadcast(env: Env, consultation: Consultati
   const { results: users } = await env.DB.prepare("SELECT telegram_user_id FROM users WHERE blocked = 0").all<{
     telegram_user_id: number;
   }>();
-  const classTimeStr = mskTimeString(new Date(consultation.scheduled_at));
+  const classTimeStr = formatMoscowTime(new Date(consultation.scheduled_at));
 
   const messages: NotifyMessage[] = users.map((u) => ({
     kind: "opening",
@@ -138,13 +139,6 @@ export async function enqueueQueueRefresh(env: Env, excludeUserId?: number): Pro
   for (const batch of chunk(messages, CHUNK_SIZE)) {
     await env.NOTIFY_QUEUE.sendBatch(batch.map((body) => ({ body })));
   }
-}
-
-function mskTimeString(date: Date): string {
-  const shifted = new Date(date.getTime() + 3 * 60 * 60_000);
-  const h = String(shifted.getUTCHours()).padStart(2, "0");
-  const m = String(shifted.getUTCMinutes()).padStart(2, "0");
-  return `${h}:${m}`;
 }
 
 /** The queue consumer: processes one batch of notification messages. */

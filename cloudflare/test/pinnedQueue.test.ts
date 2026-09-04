@@ -72,6 +72,18 @@ describe("currentQueueSnapshotText", () => {
     expect(text).toContain("1. Свободно");
   });
 
+  it("the header names the curator, room and class time so the queue is identifiable on its own", async () => {
+    await createOpenConsultation(env, "С данными");
+    const userId = await makeUser(env);
+    const text = await currentQueueSnapshotText(env, userId);
+    // createOpenConsultation() doesn't pass curator/room explicitly, so the
+    // DB-level defaults from migrations/0003 apply (config.DEFAULT_CURATOR /
+    // DEFAULT_ROOM).
+    expect(text).toContain("Куратор: Любовь Котлярова");
+    expect(text).toContain("Кабинет: 332");
+    expect(text).toMatch(/Очередь на консультацию в \d{2}:\d{2}/);
+  });
+
   it("lists everyone with positions, marking the viewer's own row", async () => {
     const consultationId = await createOpenConsultation(env, "С людьми");
     const [alice, bob] = await Promise.all([

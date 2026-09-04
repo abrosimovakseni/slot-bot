@@ -6,6 +6,7 @@ import { getUser } from "../../db/users";
 import { enqueuePositionChanged, enqueueQueueRefresh } from "../../notify";
 import { refreshPinnedQueueMessageForUser } from "../../pinnedQueue";
 import { TelegramClient } from "../../telegram";
+import { formatMoscowTime } from "../../timeUtils";
 import type { Env } from "../../types";
 import * as texts from "../texts";
 
@@ -98,10 +99,15 @@ export async function onViewQueue(env: Env, telegram: TelegramClient, chatId: nu
     return;
   }
   const entries = await getQueueView(env, consultation.id);
+  const header = texts.queueHeader(
+    consultation.curator,
+    consultation.room,
+    formatMoscowTime(new Date(consultation.scheduled_at)),
+  );
   if (entries.length === 0) {
-    await telegram.sendMessage(chatId, `${texts.QUEUE_HEADER}\n${texts.QUEUE_EMPTY}`);
+    await telegram.sendMessage(chatId, `${header}\n\n${texts.QUEUE_EMPTY}`);
   } else {
-    const lines = [texts.QUEUE_HEADER, ...entries.map((e) => `${e.position}. ${e.displayName}`)];
+    const lines = [header, "", ...entries.map((e) => `${e.position}. ${e.displayName}`)];
     await telegram.sendMessage(chatId, lines.join("\n"));
   }
   // First press ever creates+pins their "always visible" queue message;

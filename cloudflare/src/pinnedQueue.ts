@@ -35,29 +35,31 @@
  */
 import { getCurrentConsultation, getQueueView, type QueueEntry } from "./db/queue";
 import { getUser, setPinnedQueueMessage } from "./db/users";
-import { NO_CURRENT_CONSULTATION, QUEUE_EMPTY, QUEUE_HEADER } from "./bot/texts";
+import { NO_CURRENT_CONSULTATION, QUEUE_EMPTY, queueHeader } from "./bot/texts";
 import type { TelegramClient } from "./telegram";
+import { formatMoscowTime } from "./timeUtils";
 import type { Env } from "./types";
 
-function formatQueueSnapshot(entries: QueueEntry[], viewerUserId: number): string {
+function formatQueueSnapshot(entries: QueueEntry[], viewerUserId: number, header: string): string {
   if (entries.length === 0) {
-    return `${QUEUE_HEADER}\n${QUEUE_EMPTY}`;
+    return `${header}\n\n${QUEUE_EMPTY}`;
   }
   const lines = entries.map((e) => {
     const mine = !e.isPlaceholder && e.userId === viewerUserId;
     return `${e.position}. ${e.displayName}${mine ? " ← вы" : ""}`;
   });
-  return [QUEUE_HEADER, ...lines].join("\n");
+  return [header, "", ...lines].join("\n");
 }
 
 /** The text the pinned message should currently show for `viewerUserId`. */
 export async function currentQueueSnapshotText(env: Env, viewerUserId: number): Promise<string> {
   const consultation = await getCurrentConsultation(env);
   if (consultation === null) {
-    return `${QUEUE_HEADER}\n${NO_CURRENT_CONSULTATION}`;
+    return NO_CURRENT_CONSULTATION;
   }
   const entries = await getQueueView(env, consultation.id);
-  return formatQueueSnapshot(entries, viewerUserId);
+  const header = queueHeader(consultation.curator, consultation.room, formatMoscowTime(new Date(consultation.scheduled_at)));
+  return formatQueueSnapshot(entries, viewerUserId, header);
 }
 
 /**

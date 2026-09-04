@@ -37,7 +37,14 @@ export const CANCEL_DONE = "Запись отменена.";
 export const CANCEL_NOTHING_TO_CANCEL = "У вас нет активной записи на эту консультацию.";
 
 export const QUEUE_EMPTY = "Пока никто не записался.";
-export const QUEUE_HEADER = "📋 Очередь";
+
+/** Header shown above the queue list (both the one-off "Посмотреть
+ * очередь" reply and the always-visible pinned message -- see
+ * pinnedQueue.ts) -- names which consultation this queue is for, so it's
+ * clear at a glance even without scrolling back to the opening broadcast. */
+export function queueHeader(curator: string, room: string, classTimeStr: string): string {
+  return `📋 Очередь на консультацию в ${classTimeStr}\nКуратор: ${curator}\nКабинет: ${room}`;
+}
 
 export const NO_CURRENT_CONSULTATION = "Сейчас нет открытой записи на консультацию.";
 
