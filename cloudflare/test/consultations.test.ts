@@ -119,6 +119,30 @@ describe("reconcile", () => {
     expect(report.opened).toHaveLength(1);
   });
 
+  it("reconcile() at exactly Saturday 09:30 MSK creates and opens exactly one consultation, with its own curator/room", async () => {
+    const now = new Date("2027-01-09T06:30:00.000Z"); // Saturday 09:30 MSK
+    const report = await reconcile(env, now);
+    expect(report.opened).toHaveLength(1);
+    expect(report.opened[0]!.created).toBe(true);
+    expect(report.opened[0]!.justOpened).toBe(true);
+
+    const row = await env.DB.prepare("SELECT curator, room FROM consultations WHERE id = ?")
+      .bind(report.opened[0]!.consultationId)
+      .first<{ curator: string; room: string }>();
+    expect(row!.curator).toBe("Боремир Иванович");
+    expect(row!.room).toBe("324");
+  });
+
+  it("a regular Wednesday/Friday occurrence still gets the usual (default) curator/room, unlike Saturday", async () => {
+    const now = new Date("2027-01-13T06:30:00.000Z"); // Wednesday 09:30 MSK
+    const report = await reconcile(env, now);
+    const row = await env.DB.prepare("SELECT curator, room FROM consultations WHERE id = ?")
+      .bind(report.opened[0]!.consultationId)
+      .first<{ curator: string; room: string }>();
+    expect(row!.curator).toBe("Любовь Котлярова");
+    expect(row!.room).toBe("332");
+  });
+
   it("TEST20: reconcile() before the opening moment creates nothing", async () => {
     const now = new Date("2026-10-05T05:00:00.000Z"); // Monday 08:00 MSK -- well before either slot
     const before = await countConsultations();

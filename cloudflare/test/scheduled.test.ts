@@ -35,6 +35,20 @@ describe("scheduled(): Cron Triggers", () => {
     expect(await countConsultations()).toBe(before + 1);
   });
 
+  it("Cron субботы: the Saturday 06:30 UTC (09:30 MSK) trigger creates and opens exactly one consultation, curator Боремир Иванович", async () => {
+    const before = await countConsultations();
+    await runScheduled(new Date("2027-02-06T06:30:00.000Z")); // Saturday 09:30 MSK
+    expect(await countConsultations()).toBe(before + 1);
+
+    const row = await env.DB.prepare("SELECT * FROM consultations WHERE scheduled_at = ?")
+      .bind(new Date("2027-02-06T07:30:00.000Z").toISOString())
+      .first<{ opened_notified_at: string | null; curator: string; room: string }>();
+    expect(row).not.toBeNull();
+    expect(row!.opened_notified_at).not.toBeNull();
+    expect(row!.curator).toBe("Боремир Иванович");
+    expect(row!.room).toBe("324");
+  });
+
   it("повторный Cron: firing the same precise trigger again is a safe no-op (no duplicate, no re-broadcast)", async () => {
     const scheduledTime = new Date("2027-03-10T06:30:00.000Z"); // a fresh Wednesday
     const before = await countConsultations();

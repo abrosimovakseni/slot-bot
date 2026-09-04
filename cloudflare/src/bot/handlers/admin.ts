@@ -1,6 +1,7 @@
 /**
  * Admin-only flows: create or cancel a one-off consultation (for a
- * date/time outside the regular Wed/Fri schedule -- an extra session, a
+ * date/time outside the regular weekly schedule (config.ts's
+ * WEEKLY_SCHEDULE) -- an extra session, a
  * makeup slot, and so on), and change the curator/room of an already
  * existing consultation. Visible only to `env.ADMIN_ID` (the curator's own
  * telegram_user_id, set as a Cloudflare secret) -- every entry point here
@@ -9,7 +10,7 @@
  * type.
  *
  * Creating a one-off consultation opens registration one hour before its
- * class time, exactly like the regular Wed/Fri schedule -- the row is
+ * class time, exactly like the regular weekly schedule -- the row is
  * created right away (createConsultationIfAbsent), but the actual "claim +
  * broadcast" open only happens once that hour-before mark arrives, which
  * is either immediate (if the curator picks a time less than an hour out
@@ -342,7 +343,7 @@ export async function executeCancelConsultation(
     await telegram.editMessageText(chatId, messageId, texts.NO_UPCOMING_CONSULTATIONS);
     return;
   }
-  // Harmless no-op for a regular Wed/Fri consultation (which never had an
+  // Harmless no-op for a regular weekly-schedule consultation (which never had an
   // alarm scheduled in the first place) -- only actually cancels anything
   // for an admin one-off whose opening alarm hadn't fired yet.
   await cancelOpenAlarm(env, consultationId);

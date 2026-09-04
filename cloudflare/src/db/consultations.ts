@@ -127,18 +127,34 @@ export async function ensureCreatedAndOpened(
   label: string,
   scheduledAt: Date,
   opensAt: Date,
+  // Set from a WEEKLY_SCHEDULE entry's own curator/room (config.ts) when
+  // that occurrence overrides the usual ones (e.g. Saturday's Боремир
+  // Иванович/324) -- omitted for an entry that doesn't, so it falls back
+  // to DEFAULT_CURATOR/DEFAULT_ROOM at the database level (migrations/0003),
+  // exactly as before this parameter existed.
+  curator?: string,
+  room?: string,
 ): Promise<EnsureResult> {
   const scheduledIso = scheduledAt.toISOString();
   const opensIso = opensAt.toISOString();
   const nowIso = new Date().toISOString();
 
-  const insert = await env.DB.prepare(
-    `INSERT INTO consultations (label, scheduled_at, registration_opens_at, created_at)
-     SELECT ?, ?, ?, ?
-     WHERE NOT EXISTS (SELECT 1 FROM consultations WHERE scheduled_at = ?)`,
-  )
-    .bind(label, scheduledIso, opensIso, nowIso, scheduledIso)
-    .run();
+  const insert =
+    curator !== undefined && room !== undefined
+      ? await env.DB.prepare(
+          `INSERT INTO consultations (label, scheduled_at, registration_opens_at, created_at, curator, room)
+           SELECT ?, ?, ?, ?, ?, ?
+           WHERE NOT EXISTS (SELECT 1 FROM consultations WHERE scheduled_at = ?)`,
+        )
+          .bind(label, scheduledIso, opensIso, nowIso, curator, room, scheduledIso)
+          .run()
+      : await env.DB.prepare(
+          `INSERT INTO consultations (label, scheduled_at, registration_opens_at, created_at)
+           SELECT ?, ?, ?, ?
+           WHERE NOT EXISTS (SELECT 1 FROM consultations WHERE scheduled_at = ?)`,
+        )
+          .bind(label, scheduledIso, opensIso, nowIso, scheduledIso)
+          .run();
 
   let consultationId: number;
   const created = (insert.meta.changes ?? 0) === 1;
@@ -170,7 +186,7 @@ export interface CreateResult {
  * Admin one-off consultations (see bot/handlers/admin.ts): creates the row
  * now (same idempotent insert as ensureCreatedAndOpened above), but leaves
  * it unopened -- registration opens automatically later, exactly like the
- * regular Wed/Fri schedule, once `registration_opens_at` (normally one
+ * regular weekly schedule, once `registration_opens_at` (normally one
  * hour before class -- config.ADMIN_CONSULTATION_LEAD_MS) actually
  * arrives. See openDueConsultations() below for the "open when due" half.
  *
@@ -229,7 +245,7 @@ export interface OpenedConsultation {
  * registration_opens_at has arrived -- the generic "claim + open" half of
  * ensureCreatedAndOpened, without the "create if missing" half, so it
  * applies uniformly to rows regardless of how they were created: the
- * regular Wed/Fri reconcile() path below, or an admin one-off
+ * regular weekly-schedule reconcile() path below, or an admin one-off
  * (createConsultationIfAbsent above). Each open is claimed atomically
  * (same UPDATE...WHERE opened_notified_at IS NULL pattern used everywhere
  * else in this file), so calling this repeatedly -- the once-a-minute
@@ -267,9 +283,9 @@ export async function openDueConsultations(env: Env, now: Date = new Date()): Pr
  * ConsultationOpener's alarm() (see ../consultationOpener.ts) calls at
  * precisely a consultation's registration_opens_at instant, so an admin
  * one-off consultation (bot/handlers/admin.ts) opens to the second instead
- * of waiting for the next once-a-minute safety-net tick. The regular
- * Wed/Fri schedule doesn't need this: its own precise 09:30 MSK cron
- * trigger IS its opens_at moment, so it already opens exactly on time via
+ * of waiting for the next once-a-minute safety-net tick. Each entry in the
+ * regular weekly schedule doesn't need this: its own precise cron trigger
+ * IS its opens_at moment, so it already opens exactly on time via
  * reconcile()'s phase 2.
  *
  * Uses the exact same atomic claim (`UPDATE ... WHERE opened_notified_at
@@ -349,7 +365,7 @@ export async function reconcile(env: Env, now: Date = new Date()): Promise<Recon
       .first<{ id: number }>();
     if (existing === null && now >= scheduledAt) continue;
 
-    const er = await ensureCreatedAndOpened(env, entry.name, scheduledAt, opensAt);
+    const er = await ensureCreatedAndOpened(env, entry.name, scheduledAt, opensAt, entry.curator, entry.room);
     if (er.created || er.justOpened) {
       report.opened.push(er);
     }

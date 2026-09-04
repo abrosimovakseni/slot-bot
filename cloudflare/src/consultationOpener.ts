@@ -7,16 +7,16 @@
  *
  * WHY THIS EXISTS
  * --------------------------------------------------------------------------
- * The regular Wed/Fri schedule opens exactly on time for free already: its
- * own dedicated cron trigger fires at the precise 09:30 Europe/Moscow
- * moment, which IS its opens_at (see wrangler.toml, reconcile()'s phase 2).
- * An admin one-off consultation's opens_at is an arbitrary instant (one
- * hour before whatever class time the curator typed), so nothing lines up
- * with a fixed cron trigger for it -- before this file existed, it could
- * only be caught by the once-a-minute safety-net sweep
- * (db/consultations.ts's openDueConsultations()), meaning up to ~60s of
- * slop after the promised time. This closes that gap: `alarm()` fires
- * within a few seconds of the exact instant requested.
+ * The regular weekly schedule (Wed/Fri/Sat -- see WEEKLY_SCHEDULE in
+ * config.ts) opens exactly on time for free already: each entry has its own
+ * dedicated cron trigger firing at its precise opens_at moment (see
+ * wrangler.toml, reconcile()'s phase 2). An admin one-off consultation's
+ * opens_at is an arbitrary instant (one hour before whatever class time the
+ * curator typed), so nothing lines up with a fixed cron trigger for it --
+ * before this file existed, it could only be caught by the once-a-minute
+ * safety-net sweep (db/consultations.ts's openDueConsultations()), meaning
+ * up to ~60s of slop after the promised time. This closes that gap:
+ * `alarm()` fires within a few seconds of the exact instant requested.
  *
  * The safety-net sweep is NOT removed -- it stays as the backup for the
  * (rare) case this alarm doesn't fire, e.g. a transient error scheduling

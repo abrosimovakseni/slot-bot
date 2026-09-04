@@ -11,6 +11,7 @@ import {
 
 const WED = WEEKLY_SCHEDULE.find((e) => e.name === "Среда")!;
 const FRI = WEEKLY_SCHEDULE.find((e) => e.name === "Пятница")!;
+const SAT = WEEKLY_SCHEDULE.find((e) => e.name === "Суббота")!;
 
 describe("timeUtils (pure)", () => {
   it("TEST18: Wednesday occurrence is 10:30 class / 09:30 open, Europe/Moscow", () => {
@@ -38,11 +39,21 @@ describe("timeUtils (pure)", () => {
     expect(fri.getTime() - wed.getTime()).toBe(2 * 86_400_000);
   });
 
-  it("allWeekOccurrences returns both schedule entries for the containing week", () => {
+  it("TEST20: Saturday occurrence is 10:30 class / 09:30 open, Europe/Moscow, with its own curator/room", () => {
+    const now = new Date("2026-09-12T09:00:00.000Z"); // Saturday
+    const { scheduledAt, opensAt } = weekOccurrence(now, SAT);
+    expect(scheduledAt.toISOString()).toBe("2026-09-12T07:30:00.000Z"); // 10:30 MSK
+    expect(opensAt.toISOString()).toBe("2026-09-12T06:30:00.000Z"); // 09:30 MSK
+    expect(moscowWeekday(scheduledAt)).toBe(5);
+    expect(SAT.curator).toBe("Боремир Иванович");
+    expect(SAT.room).toBe("324");
+  });
+
+  it("allWeekOccurrences returns all three schedule entries for the containing week", () => {
     const now = new Date("2026-09-09T09:00:00.000Z");
     const occurrences = allWeekOccurrences(now);
-    expect(occurrences).toHaveLength(2);
-    expect(occurrences.map((o) => o.entry.name).sort()).toEqual(["Пятница", "Среда"]);
+    expect(occurrences).toHaveLength(3);
+    expect(occurrences.map((o) => o.entry.name).sort()).toEqual(["Пятница", "Среда", "Суббота"]);
   });
 
   it("moscowDateKey reflects the Moscow calendar date, not the UTC one, near midnight", () => {
