@@ -8,6 +8,18 @@
 import { getState } from "../db/state";
 import { TelegramClient, type TelegramCallbackQuery, type TelegramMessage, type TelegramUpdate } from "../telegram";
 import type { Env } from "../types";
+import {
+  abortCancelConsultation,
+  confirmCancelPick,
+  confirmCreateConsultationNo,
+  confirmCreateConsultationYes,
+  executeCancelConsultation,
+  isAdmin,
+  receiveConsultationDateTime,
+  showAdminMenu,
+  showCancelList,
+  startAddConsultation,
+} from "./handlers/admin";
 import { confirmEdit, confirmYes, receiveName } from "./handlers/nameFlow";
 import { editNameEntry, showProfile } from "./handlers/profile";
 import { onCancel, onMyPlace, onSignupCallback, onSignupButton, onViewQueue } from "./handlers/queue";
@@ -41,7 +53,19 @@ async function routeMessage(env: Env, telegram: TelegramClient, message: Telegra
   if (!text.startsWith("/")) {
     const state = await getState(env, telegramUserId);
     if (state !== null && state.state === "ASK_NAME") {
-      await receiveName(env, telegram, chatId, telegramUserId, rawText, state.flow);
+      // state.state === "ASK_NAME" is only ever set alongside flow
+      // "register" or "edit" (see nameFlow.ts / start.ts / profile.ts) --
+      // "admin_add" always pairs with "ASK_DATETIME"/"CONFIRM_DATETIME".
+      await receiveName(env, telegram, chatId, telegramUserId, rawText, state.flow as "register" | "edit");
+      return;
+    }
+    if (
+      state !== null &&
+      state.flow === "admin_add" &&
+      state.state === "ASK_DATETIME" &&
+      isAdmin(env, telegramUserId)
+    ) {
+      await receiveConsultationDateTime(env, telegram, chatId, telegramUserId, rawText);
       return;
     }
   }
@@ -61,6 +85,11 @@ async function routeMessage(env: Env, telegram: TelegramClient, message: Telegra
       return;
     case texts.BTN_PROFILE:
       await showProfile(env, telegram, chatId, telegramUserId);
+      return;
+    case texts.BTN_ADMIN:
+      if (isAdmin(env, telegramUserId)) {
+        await showAdminMenu(env, telegram, chatId);
+      }
       return;
     default:
       return; // unrecognized text -- silently ignored, same as no PTB handler matching
@@ -93,5 +122,46 @@ async function routeCallback(env: Env, telegram: TelegramClient, cq: TelegramCal
     if (Number.isFinite(consultationId)) {
       await onSignupCallback(env, telegram, chatId, telegramUserId, consultationId);
     }
+    return;
+  }
+
+  // Admin-only callbacks (see bot/handlers/admin.ts) -- every one re-checks
+  // isAdmin() itself, never trusting that only the admin could have sent
+  // this callback_data.
+  if (!isAdmin(env, telegramUserId)) return;
+
+  if (data === "admin_add_start") {
+    await startAddConsultation(env, telegram, chatId, telegramUserId);
+    return;
+  }
+  if (data === "admin_create_yes") {
+    await confirmCreateConsultationYes(env, telegram, chatId, telegramUserId, messageId);
+    return;
+  }
+  if (data === "admin_create_no") {
+    await confirmCreateConsultationNo(env, telegram, chatId, telegramUserId, messageId);
+    return;
+  }
+  if (data === "admin_cancel_list") {
+    await showCancelList(env, telegram, chatId);
+    return;
+  }
+  if (data.startsWith("admin_cancel_pick:")) {
+    const consultationId = Number(data.slice("admin_cancel_pick:".length));
+    if (Number.isFinite(consultationId)) {
+      await confirmCancelPick(env, telegram, chatId, messageId, consultationId);
+    }
+    return;
+  }
+  if (data.startsWith("admin_cancel_yes:")) {
+    const consultationId = Number(data.slice("admin_cancel_yes:".length));
+    if (Number.isFinite(consultationId)) {
+      await executeCancelConsultation(env, telegram, chatId, messageId, consultationId);
+    }
+    return;
+  }
+  if (data.startsWith("admin_cancel_no")) {
+    await abortCancelConsultation(env, telegram, chatId, messageId);
+    return;
   }
 }

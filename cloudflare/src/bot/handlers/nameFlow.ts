@@ -9,9 +9,10 @@
  */
 import { clearState, getState, setState } from "../../db/state";
 import { registerUser, updateDisplayName } from "../../db/users";
-import { confirmNameKeyboard, MAIN_MENU_KEYBOARD, TelegramClient } from "../../telegram";
+import { confirmNameKeyboard, mainMenuKeyboard, TelegramClient } from "../../telegram";
 import type { Env } from "../../types";
 import * as texts from "../texts";
+import { isAdmin } from "./admin";
 
 export async function receiveName(
   env: Env,
@@ -49,7 +50,9 @@ export async function confirmYes(
     await registerUser(env, telegramUserId, name, username);
     await clearState(env, telegramUserId);
     await telegram.editMessageText(chatId, messageId, texts.REGISTRATION_DONE);
-    await telegram.sendMessage(chatId, "Главное меню:", { replyMarkup: MAIN_MENU_KEYBOARD });
+    await telegram.sendMessage(chatId, "Главное меню:", {
+      replyMarkup: mainMenuKeyboard(isAdmin(env, telegramUserId)),
+    });
   } else {
     await updateDisplayName(env, telegramUserId, name);
     await clearState(env, telegramUserId);

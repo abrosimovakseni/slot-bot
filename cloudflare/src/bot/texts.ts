@@ -56,3 +56,45 @@ export function profileCard(displayName: string, username: string | null): strin
 
 export const ASK_NEW_NAME = "Введи новое имя и фамилию.";
 export const NAME_UPDATED = "Имя обновлено.";
+
+// ---------------------------------------------------------------------------
+// Admin: one-off consultations (visible only to env.ADMIN_ID)
+// ---------------------------------------------------------------------------
+export const BTN_ADMIN = "🛠 Админ";
+
+export const ADMIN_MENU_PROMPT = "Управление консультациями:";
+
+export const ASK_CONSULTATION_DATETIME =
+  "Введи дату и время новой консультации в формате ДД.ММ.ГГГГ ЧЧ:ММ (по московскому времени).\n" +
+  "Например: 20.09.2026 15:00";
+
+export const INVALID_DATETIME =
+  "Не получилось распознать дату и время. Формат: ДД.ММ.ГГГГ ЧЧ:ММ, например 20.09.2026 15:00.";
+
+export const DATETIME_IN_PAST = "Эта дата и время уже в прошлом. Введи другое значение.";
+
+export function confirmCreateConsultation(label: string): string {
+  return `Создать консультацию на ${label} (мск) и сразу открыть запись?`;
+}
+
+export function consultationCreated(label: string): string {
+  return `✅ Консультация на ${label} создана и открыта для записи.`;
+}
+
+export const NO_UPCOMING_CONSULTATIONS = "Нет предстоящих консультаций.";
+export const CHOOSE_CONSULTATION_TO_CANCEL = "Выбери консультацию для отмены:";
+
+export function confirmCancelConsultation(label: string): string {
+  return `Точно отменить консультацию ${label}? Все, кто уже записан, будут уведомлены.`;
+}
+
+export function consultationCancelledAdminConfirm(label: string): string {
+  return `🗑 Консультация ${label} отменена.`;
+}
+
+export function consultationCancelled(label: string): string {
+  return `❌ Консультация ${label} отменена организатором. Приносим извинения за неудобства.`;
+}
+
+export const ADMIN_ACTION_EXPIRED = "Действие устарело, начни заново через меню «🛠 Админ».";
+export const ADMIN_CANCEL_ABORTED = "Отменено.";

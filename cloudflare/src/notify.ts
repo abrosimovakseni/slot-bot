@@ -27,7 +27,7 @@
  * failure is still retried, but a redelivered *already-sent* message is a
  * safe no-op.
  */
-import { openingBroadcast, positionChanged } from "./bot/texts";
+import { consultationCancelled, openingBroadcast, positionChanged } from "./bot/texts";
 import { markBlocked } from "./db/users";
 import { signupInlineKeyboard, TelegramClient } from "./telegram";
 import type { ConsultationRow, Env, NotifyMessage } from "./types";
@@ -53,6 +53,25 @@ export async function enqueueOpeningBroadcast(env: Env, consultation: Consultati
     detail: classTimeStr,
   }));
 
+  for (const batch of chunk(messages, CHUNK_SIZE)) {
+    await env.NOTIFY_QUEUE.sendBatch(batch.map((body) => ({ body })));
+  }
+}
+
+/** Admin cancelled a not-yet-finalized consultation -- everyone who had an
+ * active signup for it is told, once each (see notifications_sent). */
+export async function enqueueConsultationCancelled(
+  env: Env,
+  consultationId: number,
+  telegramUserIds: number[],
+  detail: string,
+): Promise<void> {
+  const messages: NotifyMessage[] = telegramUserIds.map((telegramUserId) => ({
+    kind: "consultation_cancelled",
+    telegramUserId,
+    consultationId,
+    detail,
+  }));
   for (const batch of chunk(messages, CHUNK_SIZE)) {
     await env.NOTIFY_QUEUE.sendBatch(batch.map((body) => ({ body })));
   }
@@ -107,7 +126,11 @@ async function processOne(env: Env, telegram: TelegramClient, body: NotifyMessag
   }
 
   const text =
-    body.kind === "opening" ? openingBroadcast(body.detail) : positionChanged(Number(body.detail));
+    body.kind === "opening"
+      ? openingBroadcast(body.detail)
+      : body.kind === "position_changed"
+        ? positionChanged(Number(body.detail))
+        : consultationCancelled(body.detail);
   const replyMarkup = body.kind === "opening" ? signupInlineKeyboard(body.consultationId) : undefined;
 
   const result = await telegram.sendMessage(body.telegramUserId, text, { replyMarkup });

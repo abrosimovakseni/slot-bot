@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { WEEKLY_SCHEDULE } from "../src/config";
-import { allWeekOccurrences, moscowDateKey, moscowWeekday, weekOccurrence } from "../src/timeUtils";
+import {
+  allWeekOccurrences,
+  formatMoscowDateTime,
+  moscowDateKey,
+  moscowWeekday,
+  parseMoscowDateTime,
+  weekOccurrence,
+} from "../src/timeUtils";
 
 const WED = WEEKLY_SCHEDULE.find((e) => e.name === "Среда")!;
 const FRI = WEEKLY_SCHEDULE.find((e) => e.name === "Пятница")!;
@@ -50,5 +57,41 @@ describe("timeUtils (pure)", () => {
     expect(moscowWeekday(new Date("2026-09-07T10:00:00.000Z"))).toBe(0);
     // 2026-09-13 is a Sunday.
     expect(moscowWeekday(new Date("2026-09-13T10:00:00.000Z"))).toBe(6);
+  });
+});
+
+describe("formatMoscowDateTime / parseMoscowDateTime (admin one-off consultations)", () => {
+  it("formats a UTC instant as its Moscow wall-clock DD.MM.YYYY HH:MM", () => {
+    expect(formatMoscowDateTime(new Date("2026-09-20T12:00:00.000Z"))).toBe("20.09.2026 15:00");
+  });
+
+  it("parses DD.MM.YYYY HH:MM as Moscow local time back into the same UTC instant", () => {
+    expect(parseMoscowDateTime("20.09.2026 15:00")?.toISOString()).toBe("2026-09-20T12:00:00.000Z");
+  });
+
+  it("round-trips through both directions for an arbitrary instant", () => {
+    const original = new Date("2027-01-06T06:30:00.000Z");
+    const label = formatMoscowDateTime(original);
+    expect(parseMoscowDateTime(label)?.toISOString()).toBe(original.toISOString());
+  });
+
+  it("accepts a single-digit day/month/hour", () => {
+    expect(parseMoscowDateTime("5.9.2026 9:05")?.toISOString()).toBe("2026-09-05T06:05:00.000Z");
+  });
+
+  it("rejects text that doesn't match the format", () => {
+    expect(parseMoscowDateTime("not a date")).toBeNull();
+    expect(parseMoscowDateTime("20/09/2026 15:00")).toBeNull();
+    expect(parseMoscowDateTime("20.09.2026")).toBeNull();
+  });
+
+  it("rejects an impossible calendar date instead of silently rolling it over", () => {
+    expect(parseMoscowDateTime("31.02.2026 12:00")).toBeNull(); // February never has 31 days
+    expect(parseMoscowDateTime("31.04.2026 12:00")).toBeNull(); // April has 30 days
+  });
+
+  it("rejects an out-of-range hour or minute", () => {
+    expect(parseMoscowDateTime("20.09.2026 25:00")).toBeNull();
+    expect(parseMoscowDateTime("20.09.2026 12:60")).toBeNull();
   });
 });

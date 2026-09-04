@@ -20,6 +20,10 @@ export default defineConfig({
             // access or a real bot.
             BOT_TOKEN: "test-bot-token",
             WEBHOOK_SECRET: "test-webhook-secret",
+            // A fixed telegram_user_id, deliberately outside the range
+            // test/helpers.ts's makeUser() generates (900_000_000+), so
+            // admin-flow tests can never collide with a helper-made user.
+            ADMIN_ID: "1",
           },
         },
       };

@@ -82,3 +82,54 @@ export function allWeekOccurrences(now: Date): WeekOccurrence[] {
     return { entry, scheduledAt, opensAt };
   });
 }
+
+/**
+ * "DD.MM.YYYY HH:MM" for the Europe/Moscow wall-clock time of `date` --
+ * used for the admin one-off consultation flow (see bot/handlers/admin.ts),
+ * both to show the curator what they're about to create/cancel and to
+ * label the resulting broadcast/notification.
+ */
+export function formatMoscowDateTime(date: Date): string {
+  const shifted = toMoscowShifted(date);
+  const dd = String(shifted.getUTCDate()).padStart(2, "0");
+  const mm = String(shifted.getUTCMonth() + 1).padStart(2, "0");
+  const yyyy = shifted.getUTCFullYear();
+  const hh = String(shifted.getUTCHours()).padStart(2, "0");
+  const min = String(shifted.getUTCMinutes()).padStart(2, "0");
+  return `${dd}.${mm}.${yyyy} ${hh}:${min}`;
+}
+
+const MOSCOW_DATETIME_RE = /^(\d{1,2})\.(\d{1,2})\.(\d{4})[ ,T]+(\d{1,2}):(\d{2})$/;
+
+/**
+ * Parses "DD.MM.YYYY HH:MM" as Europe/Moscow local time, returning the
+ * matching UTC instant -- or null if the text doesn't match the format, or
+ * names an impossible calendar date/time (e.g. 31.02.2026, or 25:00).
+ * `Date.UTC` silently rolls invalid component values over into the next
+ * day/month rather than rejecting them, so the parsed result is round-
+ * tripped back through `toMoscowShifted` and compared to the typed digits
+ * to catch that case.
+ */
+export function parseMoscowDateTime(text: string): Date | null {
+  const m = MOSCOW_DATETIME_RE.exec(text.trim());
+  if (m === null) return null;
+  const day = Number(m[1]);
+  const month = Number(m[2]);
+  const year = Number(m[3]);
+  const hour = Number(m[4]);
+  const minute = Number(m[5]);
+  if (month < 1 || month > 12 || hour > 23 || minute > 59) return null;
+
+  const result = new Date(Date.UTC(year, month - 1, day, hour, minute) - OFFSET_MS);
+  const roundTrip = toMoscowShifted(result);
+  if (
+    roundTrip.getUTCFullYear() !== year ||
+    roundTrip.getUTCMonth() !== month - 1 ||
+    roundTrip.getUTCDate() !== day ||
+    roundTrip.getUTCHours() !== hour ||
+    roundTrip.getUTCMinutes() !== minute
+  ) {
+    return null;
+  }
+  return result;
+}

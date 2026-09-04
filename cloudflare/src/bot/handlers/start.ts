@@ -6,9 +6,10 @@
 import { clearState } from "../../db/state";
 import { getUser, syncUsername } from "../../db/users";
 import { setState } from "../../db/state";
-import { MAIN_MENU_KEYBOARD, TelegramClient } from "../../telegram";
+import { mainMenuKeyboard, TelegramClient } from "../../telegram";
 import type { Env } from "../../types";
 import * as texts from "../texts";
+import { isAdmin } from "./admin";
 
 export async function cmdStart(
   env: Env,
@@ -21,7 +22,7 @@ export async function cmdStart(
   if (existing !== null) {
     await syncUsername(env, telegramUserId, username);
     await clearState(env, telegramUserId); // /start also cancels any stray in-progress flow
-    await telegram.sendMessage(chatId, texts.WELCOME_BACK, { replyMarkup: MAIN_MENU_KEYBOARD });
+    await telegram.sendMessage(chatId, texts.WELCOME_BACK, { replyMarkup: mainMenuKeyboard(isAdmin(env, telegramUserId)) });
     return;
   }
   await setState(env, telegramUserId, "register", "ASK_NAME", null);

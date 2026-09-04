@@ -223,3 +223,56 @@ export async function getConsultation(env: Env, id: number): Promise<Consultatio
   const row = await env.DB.prepare("SELECT * FROM consultations WHERE id = ?").bind(id).first<ConsultationRow>();
   return row ?? null;
 }
+
+// ---------------------------------------------------------------------------
+// Admin: one-off consultations (see bot/handlers/admin.ts)
+// ---------------------------------------------------------------------------
+export interface UpcomingConsultation {
+  id: number;
+  label: string;
+  scheduled_at: string;
+}
+
+/** Not-yet-finalized consultations still ahead of `now`, earliest first --
+ * backs the admin "cancel a consultation" picker. */
+export async function listUpcomingConsultations(env: Env, now: Date = new Date()): Promise<UpcomingConsultation[]> {
+  const { results } = await env.DB.prepare(
+    "SELECT id, label, scheduled_at FROM consultations WHERE finalized_at IS NULL AND scheduled_at > ? ORDER BY scheduled_at ASC",
+  )
+    .bind(now.toISOString())
+    .all<UpcomingConsultation>();
+  return results;
+}
+
+export interface DeleteConsultationResult {
+  existed: boolean;
+  /** telegram_user_ids who had an active signup at the time of deletion --
+   * the caller notifies them the consultation was cancelled. */
+  affectedUserIds: number[];
+}
+
+/**
+ * Admin-initiated hard delete of a not-yet-finalized consultation (e.g. a
+ * mistakenly-added one-off date, or the curator cancelling in advance).
+ * Signups are removed explicitly in the same atomic batch as the
+ * consultation row itself, rather than relying on the schema's
+ * `ON DELETE CASCADE` -- D1 does not guarantee `PRAGMA foreign_keys=ON` is
+ * in effect on every pooled connection, so an explicit batch is the
+ * reliable way to keep this atomic, consistent with finalizeConsultation()
+ * above. Deleting an id that no longer exists is a safe no-op
+ * (`existed: false`), so a retried admin action can never double-notify.
+ */
+export async function deleteConsultation(env: Env, consultationId: number): Promise<DeleteConsultationResult> {
+  const { results: activeSignups } = await env.DB.prepare(
+    "SELECT user_id FROM signups WHERE consultation_id = ? AND active = 1",
+  )
+    .bind(consultationId)
+    .all<{ user_id: number }>();
+
+  const results = await env.DB.batch([
+    env.DB.prepare("DELETE FROM signups WHERE consultation_id = ?").bind(consultationId),
+    env.DB.prepare("DELETE FROM consultations WHERE id = ?").bind(consultationId),
+  ]);
+  const existed = (results[1]!.meta.changes ?? 0) === 1;
+  return { existed, affectedUserIds: existed ? activeSignups.map((s) => s.user_id) : [] };
+}

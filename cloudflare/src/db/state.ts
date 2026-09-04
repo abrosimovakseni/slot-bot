@@ -18,8 +18,8 @@ export async function getState(env: Env, telegramUserId: number): Promise<UserSt
 export async function setState(
   env: Env,
   telegramUserId: number,
-  flow: "register" | "edit",
-  state: "ASK_NAME" | "CONFIRM_NAME",
+  flow: "register" | "edit" | "admin_add",
+  state: "ASK_NAME" | "CONFIRM_NAME" | "ASK_DATETIME" | "CONFIRM_DATETIME",
   pendingName: string | null,
 ): Promise<void> {
   const now = new Date().toISOString();

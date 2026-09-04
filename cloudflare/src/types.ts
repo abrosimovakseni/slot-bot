@@ -1,7 +1,7 @@
 /** Worker environment bindings + row shapes shared across modules. */
 
 export interface NotifyMessage {
-  kind: "opening" | "position_changed";
+  kind: "opening" | "position_changed" | "consultation_cancelled";
   telegramUserId: number;
   consultationId: number;
   /** For "opening": the class time string (HH:MM) to show. For
@@ -55,8 +55,8 @@ export interface SignupRow {
 
 export interface UserStateRow {
   telegram_user_id: number;
-  flow: "register" | "edit";
-  state: "ASK_NAME" | "CONFIRM_NAME";
+  flow: "register" | "edit" | "admin_add";
+  state: "ASK_NAME" | "CONFIRM_NAME" | "ASK_DATETIME" | "CONFIRM_DATETIME";
   pending_name: string | null;
   updated_at: string;
 }

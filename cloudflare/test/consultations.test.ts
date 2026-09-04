@@ -1,8 +1,14 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { WEEKLY_SCHEDULE } from "../src/config";
-import { ensureCreatedAndOpened, finalizeConsultation, reconcile } from "../src/db/consultations";
-import { signupUser } from "../src/db/queue";
+import {
+  deleteConsultation,
+  ensureCreatedAndOpened,
+  finalizeConsultation,
+  listUpcomingConsultations,
+  reconcile,
+} from "../src/db/consultations";
+import { getQueueView, signupUser } from "../src/db/queue";
 import { createOpenConsultation, getUserStatus, makeUser } from "./helpers";
 
 const WED = WEEKLY_SCHEDULE.find((e) => e.name === "Среда")!;
@@ -172,8 +178,74 @@ describe("reconcile", () => {
     const newConsultationId = second.opened[0]!.consultationId;
     expect(newConsultationId).not.toBe(oldConsultationId);
 
-    const { getQueueView } = await import("../src/db/queue");
     const entries = await getQueueView(env, newConsultationId);
     expect(entries.every((e) => e.isPlaceholder)).toBe(true); // empty except reserved placeholders
+  });
+});
+
+describe("admin: listUpcomingConsultations / deleteConsultation", () => {
+  it("listUpcomingConsultations returns only non-finalized, still-future consultations, earliest first", async () => {
+    const now = new Date("2030-01-01T00:00:00.000Z");
+    const later = await ensureCreatedAndOpened(env, "Доп. консультация", new Date("2030-01-20T12:00:00.000Z"), now);
+    const earlier = await ensureCreatedAndOpened(env, "Доп. консультация", new Date("2030-01-10T12:00:00.000Z"), now);
+    const past = await ensureCreatedAndOpened(env, "Доп. консультация", new Date("2029-12-01T12:00:00.000Z"), now);
+
+    const upcoming = await listUpcomingConsultations(env, now);
+    const ids = upcoming.map((c) => c.id);
+    expect(ids).toContain(earlier.consultationId);
+    expect(ids).toContain(later.consultationId);
+    expect(ids).not.toContain(past.consultationId); // already in the past relative to `now`
+    // Earliest-first among the two future ones.
+    const earlierIdx = ids.indexOf(earlier.consultationId);
+    const laterIdx = ids.indexOf(later.consultationId);
+    expect(earlierIdx).toBeLessThan(laterIdx);
+  });
+
+  it("listUpcomingConsultations excludes an already-finalized consultation", async () => {
+    const now = new Date("2030-02-01T00:00:00.000Z");
+    const created = await ensureCreatedAndOpened(env, "Доп. консультация", new Date("2030-02-15T12:00:00.000Z"), now);
+    await finalizeConsultation(env, created.consultationId);
+    const upcoming = await listUpcomingConsultations(env, now);
+    expect(upcoming.map((c) => c.id)).not.toContain(created.consultationId);
+  });
+
+  it("deleteConsultation removes the consultation and its signups, reporting who was affected", async () => {
+    // signupUser() checks registration_opens_at against the real wall clock
+    // (it has no `now` override), so -- unlike the other cases in this
+    // describe block, which only exercise ensureCreatedAndOpened/
+    // listUpcomingConsultations against a fictional `now` -- opensAt here
+    // must actually be in the real past for the signups below to succeed.
+    const opensAt = new Date(Date.now() - 60_000);
+    const created = await ensureCreatedAndOpened(env, "Доп. консультация", new Date("2030-03-15T12:00:00.000Z"), opensAt);
+    const [alice, bob] = await Promise.all([makeUser(env), makeUser(env)]);
+    await signupUser(env, created.consultationId, alice!);
+    await signupUser(env, created.consultationId, bob!);
+
+    const result = await deleteConsultation(env, created.consultationId);
+    expect(result.existed).toBe(true);
+    expect(new Set(result.affectedUserIds)).toEqual(new Set([alice, bob]));
+
+    const gone = await env.DB.prepare("SELECT id FROM consultations WHERE id = ?")
+      .bind(created.consultationId)
+      .first();
+    expect(gone).toBeNull();
+    const { results: signupRows } = await env.DB.prepare("SELECT id FROM signups WHERE consultation_id = ?")
+      .bind(created.consultationId)
+      .all();
+    expect(signupRows).toHaveLength(0);
+  });
+
+  it("deleteConsultation on an id that no longer exists is a safe no-op", async () => {
+    const result = await deleteConsultation(env, 999_999_999);
+    expect(result.existed).toBe(false);
+    expect(result.affectedUserIds).toEqual([]);
+  });
+
+  it("deleteConsultation with nobody signed up reports no affected users", async () => {
+    const now = new Date("2030-04-01T00:00:00.000Z");
+    const created = await ensureCreatedAndOpened(env, "Доп. консультация", new Date("2030-04-15T12:00:00.000Z"), now);
+    const result = await deleteConsultation(env, created.consultationId);
+    expect(result.existed).toBe(true);
+    expect(result.affectedUserIds).toEqual([]);
   });
 });

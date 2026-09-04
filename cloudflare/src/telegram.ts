@@ -5,6 +5,7 @@
  * skip them in future broadcasts -- the equivalent of the Railway version's
  * `_safe_send` catching `telegram.error.Forbidden`.
  */
+import { BTN_ADMIN } from "./bot/texts";
 
 export interface InlineKeyboardButton {
   text: string;
@@ -24,6 +25,13 @@ export const MAIN_MENU_KEYBOARD: ReplyKeyboardMarkup = {
   resize_keyboard: true,
   is_persistent: true,
 };
+
+/** The main menu, with an extra "🛠 Админ" row for env.ADMIN_ID only. */
+export function mainMenuKeyboard(isAdmin: boolean): ReplyKeyboardMarkup {
+  const keyboard = MAIN_MENU_KEYBOARD.keyboard.map((row) => [...row]);
+  if (isAdmin) keyboard.push([BTN_ADMIN]);
+  return { keyboard, resize_keyboard: true, is_persistent: true };
+}
 
 export interface SendResult {
   ok: boolean;
@@ -124,6 +132,44 @@ export function profileKeyboard(): InlineKeyboardMarkup {
 
 export function signupInlineKeyboard(consultationId: number): InlineKeyboardMarkup {
   return { inline_keyboard: [[{ text: "Записаться", callback_data: `signup:${consultationId}` }]] };
+}
+
+// ---------------------------------------------------------------------------
+// Admin: one-off consultations
+// ---------------------------------------------------------------------------
+export function adminMenuKeyboard(): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [{ text: "➕ Добавить консультацию", callback_data: "admin_add_start" }],
+      [{ text: "🗑 Отменить консультацию", callback_data: "admin_cancel_list" }],
+    ],
+  };
+}
+
+export function confirmCreateConsultationKeyboard(): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [
+        { text: "Да", callback_data: "admin_create_yes" },
+        { text: "Отмена", callback_data: "admin_create_no" },
+      ],
+    ],
+  };
+}
+
+export function cancelConsultationListKeyboard(items: Array<{ id: number; label: string }>): InlineKeyboardMarkup {
+  return { inline_keyboard: items.map((it) => [{ text: it.label, callback_data: `admin_cancel_pick:${it.id}` }]) };
+}
+
+export function confirmCancelConsultationKeyboard(consultationId: number): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [
+        { text: "Да, отменить", callback_data: `admin_cancel_yes:${consultationId}` },
+        { text: "Нет", callback_data: `admin_cancel_no:${consultationId}` },
+      ],
+    ],
+  };
 }
 
 // ---------------------------------------------------------------------------
