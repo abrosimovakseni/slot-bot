@@ -42,17 +42,18 @@ describe("scheduled(): Cron Triggers", () => {
     expect(await countConsultations()).toBe(before + 1);
 
     // Telegram retries deliveries, deploys restart mid-window, and the
-    // 15-minute safety-net tick can all land on a slot that's already open
-    // -- none of them may create a second row or re-fire the broadcast.
+    // once-a-minute safety-net tick can all land on a slot that's already
+    // open -- none of them may create a second row or re-fire the broadcast.
     await runScheduled(new Date(scheduledTime.getTime() + 60_000));
     await runScheduled(new Date(scheduledTime.getTime() + 5 * 60_000));
     expect(await countConsultations()).toBe(before + 1);
   });
 
-  it("safety-net tick (every 15 minutes) catches up on an opening the precise trigger missed", async () => {
+  it("safety-net tick (every minute) catches up on an opening the precise trigger missed", async () => {
     // Simulate the precise 06:30 trigger never firing (a deploy in progress,
-    // a transient platform error) -- the next 15-minute safety-net tick at
-    // 06:45 must still open the slot using the exact same idempotent path.
+    // a transient platform error) -- a later safety-net tick (15 min out,
+    // to make the "definitely missed" scenario unambiguous here) must still
+    // open the slot using the exact same idempotent path.
     const missedOpen = new Date("2027-03-12T06:45:00.000Z"); // Friday, 15 min after the precise trigger
     const before = await countConsultations();
     await runScheduled(missedOpen);

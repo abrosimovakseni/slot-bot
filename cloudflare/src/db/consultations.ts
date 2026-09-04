@@ -231,7 +231,7 @@ export interface OpenedConsultation {
  * regular Wed/Fri reconcile() path below, or an admin one-off
  * (createConsultationIfAbsent above). Each open is claimed atomically
  * (same UPDATE...WHERE opened_notified_at IS NULL pattern used everywhere
- * else in this file), so calling this repeatedly -- the 15-minute
+ * else in this file), so calling this repeatedly -- the once-a-minute
  * safety-net tick, or an immediate check right after an admin creates a
  * consultation whose opening time has already arrived -- never re-opens
  * or re-broadcasts the same consultation twice.

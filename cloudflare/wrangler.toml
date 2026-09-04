@@ -37,16 +37,22 @@ dead_letter_queue = "slot-notify-dlq"
 # timezones). Europe/Moscow is UTC+3 year-round (Russia has not observed DST
 # since 2014), so the offset is fixed and never needs seasonal adjustment.
 #
-#   "30 6 * * 3"   Wednesday 09:30 Europe/Moscow (06:30 UTC) -- prompt open
-#   "30 6 * * 5"   Friday    09:30 Europe/Moscow (06:30 UTC) -- prompt open
-#   "*/15 * * * *" safety-net reconcile, every 15 minutes, every day --
-#                  finalizes past-due consultations and catches up on any
-#                  opening the two precise triggers above might have missed
-#                  (a deploy mid-window, a transient error, etc.), using the
-#                  exact same idempotent reconcile() logic either way.
+#   "30 6 * * 3"  Wednesday 09:30 Europe/Moscow (06:30 UTC) -- prompt open
+#   "30 6 * * 5"  Friday    09:30 Europe/Moscow (06:30 UTC) -- prompt open
+#   "* * * * *"   safety-net reconcile, every minute, every day -- finalizes
+#                 past-due consultations and catches up on any opening the
+#                 two precise triggers above (or an admin one-off
+#                 consultation's own hour-before mark) might have missed
+#                 (a deploy mid-window, a transient error, etc.), using the
+#                 exact same idempotent reconcile() logic either way. Runs
+#                 this often specifically so an admin one-off consultation's
+#                 registration opens within about a minute of its due time,
+#                 not up to 15 -- each tick is a handful of small, cheap D1
+#                 reads (a no-op unless something's actually due), well
+#                 within the free tier at 1,440 invocations/day.
 # ---------------------------------------------------------------------------
 [triggers]
-crons = ["30 6 * * 3", "30 6 * * 5", "*/15 * * * *"]
+crons = ["30 6 * * 3", "30 6 * * 5", "* * * * *"]
 
 [observability]
 enabled = true

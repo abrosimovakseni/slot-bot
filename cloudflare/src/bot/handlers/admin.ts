@@ -13,8 +13,8 @@
  * created right away (createConsultationIfAbsent), but the actual "claim +
  * broadcast" open only happens once that hour-before mark arrives
  * (openDueConsultations), whether that's immediately (if the curator picks
- * a time less than an hour out) or later, picked up by the same 15-minute
- * safety-net cron tick that opens the regular schedule (see
+ * a time less than an hour out) or later, picked up by the same
+ * once-a-minute safety-net cron tick that opens the regular schedule (see
  * db/consultations.ts's reconcile()). Cancelling reuses
  * `deleteConsultation()` (db/consultations.ts) and the same Queues-backed
  * notification path as everything else in notify.ts, so a cancellation
@@ -238,7 +238,7 @@ export async function confirmCreateConsultationYes(
 
   // If the hour-before mark has already arrived (the curator picked a time
   // less than an hour out), open it right now instead of waiting for the
-  // next 15-minute safety-net tick.
+  // next once-a-minute safety-net tick.
   const opened = await openDueConsultations(env, new Date());
   const justOpened = opened.some((o) => o.consultationId === consultationId);
   await telegram.editMessageText(
