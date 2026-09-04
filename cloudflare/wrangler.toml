@@ -1,0 +1,52 @@
+name = "slot-hse-bot"
+main = "src/index.ts"
+compatibility_date = "2026-08-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ---------------------------------------------------------------------------
+# D1 database
+# ---------------------------------------------------------------------------
+# `database_id` is filled in after `wrangler d1 create slot_bot_db` -- see
+# README.md "Deployment" section for the one-time setup steps.
+[[d1_databases]]
+binding = "DB"
+database_name = "slot_bot_db"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+migrations_dir = "migrations"
+
+# ---------------------------------------------------------------------------
+# Queues -- used only for mass notification fan-out (opening broadcast,
+# position-changed notices), so a slow/blocked recipient or a transient
+# Telegram error can never affect anyone else, and so a broadcast to a
+# course with 50+ students never risks the Workers Free plan's 50
+# subrequests-per-invocation ceiling (see README.md "Why Queues").
+# ---------------------------------------------------------------------------
+[[queues.producers]]
+queue = "slot-notify"
+binding = "NOTIFY_QUEUE"
+
+[[queues.consumers]]
+queue = "slot-notify"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 5
+dead_letter_queue = "slot-notify-dlq"
+
+# ---------------------------------------------------------------------------
+# Cron Triggers -- all in UTC (Cloudflare Cron Triggers do not support named
+# timezones). Europe/Moscow is UTC+3 year-round (Russia has not observed DST
+# since 2014), so the offset is fixed and never needs seasonal adjustment.
+#
+#   "30 6 * * 3"   Wednesday 09:30 Europe/Moscow (06:30 UTC) -- prompt open
+#   "30 6 * * 5"   Friday    09:30 Europe/Moscow (06:30 UTC) -- prompt open
+#   "*/15 * * * *" safety-net reconcile, every 15 minutes, every day --
+#                  finalizes past-due consultations and catches up on any
+#                  opening the two precise triggers above might have missed
+#                  (a deploy mid-window, a transient error, etc.), using the
+#                  exact same idempotent reconcile() logic either way.
+# ---------------------------------------------------------------------------
+[triggers]
+crons = ["30 6 * * 3", "30 6 * * 5", "*/15 * * * *"]
+
+[observability]
+enabled = true
