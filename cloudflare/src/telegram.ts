@@ -37,6 +37,12 @@ export interface SendResult {
   ok: boolean;
   /** true if Telegram reported the user blocked the bot / deleted their account (HTTP 403). */
   blocked: boolean;
+  /** true if Telegram reported the target message no longer exists (e.g. the
+   * user deleted or unpinned-and-deleted it) -- distinct from a generic
+   * failure so callers can tell "recreate it" apart from "just retry". */
+  notFound?: boolean;
+  /** message_id of the message this call created, when applicable (sendMessage). */
+  messageId?: number;
 }
 
 export class TelegramClient {
@@ -61,15 +67,23 @@ export class TelegramClient {
         console.warn(`telegram ${method} failed: HTTP ${resp.status} ${body}`);
         return { ok: false, blocked: false };
       }
-      const data = (await resp.json()) as { ok: boolean; error_code?: number; description?: string };
+      const data = (await resp.json()) as {
+        ok: boolean;
+        result?: { message_id?: number };
+        error_code?: number;
+        description?: string;
+      };
       if (!data.ok) {
         if (data.error_code === 403) {
           return { ok: false, blocked: true };
         }
+        if (data.error_code === 400 && /message to (edit|delete|pin) not found/i.test(data.description ?? "")) {
+          return { ok: false, blocked: false, notFound: true };
+        }
         console.warn(`telegram ${method} failed: ${data.error_code} ${data.description ?? ""}`);
         return { ok: false, blocked: false };
       }
-      return { ok: true, blocked: false };
+      return { ok: true, blocked: false, messageId: data.result?.message_id };
     } catch (err) {
       console.warn(`telegram ${method} threw: ${String(err)}`);
       return { ok: false, blocked: false };
@@ -104,6 +118,13 @@ export class TelegramClient {
 
   answerCallbackQuery(callbackQueryId: string, text?: string): Promise<SendResult> {
     return this.call("answerCallbackQuery", { callback_query_id: callbackQueryId, text });
+  }
+
+  /** Pins a message in a chat without a notification -- used to keep the
+   * per-user "always visible" queue-status message pinned to the top of
+   * their DM with the bot (see src/pinnedQueue.ts). */
+  pinChatMessage(chatId: number, messageId: number): Promise<SendResult> {
+    return this.call("pinChatMessage", { chat_id: chatId, message_id: messageId, disable_notification: true });
   }
 
   setWebhook(url: string, secretToken: string): Promise<SendResult> {

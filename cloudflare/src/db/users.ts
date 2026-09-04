@@ -67,3 +67,28 @@ export async function allReachableUsers(env: Env): Promise<UserRow[]> {
   const { results } = await env.DB.prepare("SELECT * FROM users WHERE blocked = 0").all<UserRow>();
   return results;
 }
+
+// ---------------------------------------------------------------------------
+// Pinned "always visible" queue-status message (see ../pinnedQueue.ts)
+// ---------------------------------------------------------------------------
+export async function setPinnedQueueMessage(
+  env: Env,
+  telegramUserId: number,
+  messageId: number | null,
+): Promise<void> {
+  await env.DB.prepare("UPDATE users SET pinned_queue_message_id = ? WHERE telegram_user_id = ?")
+    .bind(messageId, telegramUserId)
+    .run();
+}
+
+/** Everyone with a live pinned queue message -- i.e. everyone who has ever
+ * signed up or pressed "Посмотреть очередь" and can still be reached. This
+ * is the broadcast list for enqueueQueueRefresh(): only people who've
+ * opted in by actually using the queue feature get their pin kept fresh,
+ * rather than every registered user being pinned unconditionally. */
+export async function pinnedQueueViewerIds(env: Env): Promise<number[]> {
+  const { results } = await env.DB.prepare(
+    "SELECT telegram_user_id FROM users WHERE blocked = 0 AND pinned_queue_message_id IS NOT NULL",
+  ).all<{ telegram_user_id: number }>();
+  return results.map((r) => r.telegram_user_id);
+}

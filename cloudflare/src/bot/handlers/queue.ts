@@ -3,7 +3,8 @@
  * bot/handlers_queue.py. */
 import { cancelSignup, getCurrentConsultation, getMyPosition, getQueueView, signupUser } from "../../db/queue";
 import { getUser } from "../../db/users";
-import { enqueuePositionChanged } from "../../notify";
+import { enqueuePositionChanged, enqueueQueueRefresh } from "../../notify";
+import { refreshPinnedQueueMessageForUser } from "../../pinnedQueue";
 import { TelegramClient } from "../../telegram";
 import type { Env } from "../../types";
 import * as texts from "../texts";
@@ -38,6 +39,11 @@ async function doSignup(env: Env, telegram: TelegramClient, chatId: number, tele
         message += texts.RESTRICTED_NOTICE;
       }
       await telegram.sendMessage(chatId, message);
+      // Give this student their own "always visible" queue message right
+      // away (creating it on first-ever signup), and let everyone else who
+      // already has one know the queue just changed.
+      await refreshPinnedQueueMessageForUser(env, telegram, telegramUserId);
+      await enqueueQueueRefresh(env, telegramUserId);
       return;
     }
   }
@@ -94,10 +100,14 @@ export async function onViewQueue(env: Env, telegram: TelegramClient, chatId: nu
   const entries = await getQueueView(env, consultation.id);
   if (entries.length === 0) {
     await telegram.sendMessage(chatId, `${texts.QUEUE_HEADER}\n${texts.QUEUE_EMPTY}`);
-    return;
+  } else {
+    const lines = [texts.QUEUE_HEADER, ...entries.map((e) => `${e.position}. ${e.displayName}`)];
+    await telegram.sendMessage(chatId, lines.join("\n"));
   }
-  const lines = [texts.QUEUE_HEADER, ...entries.map((e) => `${e.position}. ${e.displayName}`)];
-  await telegram.sendMessage(chatId, lines.join("\n"));
+  // First press ever creates+pins their "always visible" queue message;
+  // later presses just make sure it's caught up (in case an earlier
+  // broadcast to it failed).
+  await refreshPinnedQueueMessageForUser(env, telegram, telegramUserId);
 }
 
 export async function onCancel(env: Env, telegram: TelegramClient, chatId: number, telegramUserId: number): Promise<void> {
@@ -116,4 +126,6 @@ export async function onCancel(env: Env, telegram: TelegramClient, chatId: numbe
   if (result.changedPositions.size > 0) {
     await enqueuePositionChanged(env, consultation.id, result.changedPositions);
   }
+  await refreshPinnedQueueMessageForUser(env, telegram, telegramUserId);
+  await enqueueQueueRefresh(env, telegramUserId);
 }

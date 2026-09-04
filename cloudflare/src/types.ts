@@ -1,13 +1,23 @@
 /** Worker environment bindings + row shapes shared across modules. */
 
-export interface NotifyMessage {
-  kind: "opening" | "position_changed" | "consultation_cancelled";
-  telegramUserId: number;
-  consultationId: number;
-  /** For "opening": the class time string (HH:MM) to show. For
-   * "position_changed": the new 1-based position. */
-  detail: string;
-}
+export type NotifyMessage =
+  | {
+      kind: "opening" | "position_changed" | "consultation_cancelled";
+      telegramUserId: number;
+      consultationId: number;
+      /** For "opening": the class time string (HH:MM) to show. For
+       * "position_changed": the new 1-based position. For
+       * "consultation_cancelled": the human-readable date/time label. */
+      detail: string;
+    }
+  | {
+      /** "The pinned queue-status message for this user may be stale --
+       * recompute and re-edit it." Not a one-off notification (see
+       * pinnedQueue.ts), so it carries no consultationId/detail and never
+       * goes through the notifications_sent dedupe table. */
+      kind: "queue_refresh";
+      telegramUserId: number;
+    };
 
 export interface Env {
   DB: D1Database;
@@ -30,6 +40,10 @@ export interface UserRow {
   registered_at: string;
   priority_status: PriorityStatus;
   blocked: number; // 0 | 1
+  /** message_id of the pinned "always visible" queue-status message the
+   * bot keeps in this user's DM (see src/pinnedQueue.ts), or null if
+   * they've never triggered one yet. */
+  pinned_queue_message_id: number | null;
 }
 
 export interface ConsultationRow {

@@ -28,7 +28,8 @@
  * safe no-op.
  */
 import { consultationCancelled, openingBroadcast, positionChanged } from "./bot/texts";
-import { markBlocked } from "./db/users";
+import { markBlocked, pinnedQueueViewerIds } from "./db/users";
+import { refreshPinnedQueueMessageForUser } from "./pinnedQueue";
 import { signupInlineKeyboard, TelegramClient } from "./telegram";
 import type { ConsultationRow, Env, NotifyMessage } from "./types";
 
@@ -93,6 +94,24 @@ export async function enqueuePositionChanged(
   }
 }
 
+/**
+ * Tells everyone with a live pinned queue message (see pinnedQueue.ts) that
+ * it may be stale and should be recomputed -- called after any event that
+ * changes what the "current" queue looks like: a new signup, a
+ * cancellation, an admin creating or cancelling a one-off consultation.
+ * `excludeUserId` skips the person who just acted, when the caller already
+ * refreshed their own pin directly (see bot/handlers/queue.ts) -- purely an
+ * optimization, since refreshing twice is harmless.
+ */
+export async function enqueueQueueRefresh(env: Env, excludeUserId?: number): Promise<void> {
+  const userIds = (await pinnedQueueViewerIds(env)).filter((id) => id !== excludeUserId);
+  if (userIds.length === 0) return;
+  const messages: NotifyMessage[] = userIds.map((telegramUserId) => ({ kind: "queue_refresh", telegramUserId }));
+  for (const batch of chunk(messages, CHUNK_SIZE)) {
+    await env.NOTIFY_QUEUE.sendBatch(batch.map((body) => ({ body })));
+  }
+}
+
 function mskTimeString(date: Date): string {
   const shifted = new Date(date.getTime() + 3 * 60 * 60_000);
   const h = String(shifted.getUTCHours()).padStart(2, "0");
@@ -116,6 +135,13 @@ export async function processNotifyBatch(batch: MessageBatch<NotifyMessage>, env
 }
 
 async function processOne(env: Env, telegram: TelegramClient, body: NotifyMessage): Promise<void> {
+  if (body.kind === "queue_refresh") {
+    // Not a one-off send -- see pinnedQueue.ts's doc comment for why this
+    // deliberately skips the notifications_sent dedupe entirely.
+    await refreshPinnedQueueMessageForUser(env, telegram, body.telegramUserId);
+    return;
+  }
+
   const already = await env.DB.prepare(
     "SELECT 1 FROM notifications_sent WHERE telegram_user_id = ? AND consultation_id = ? AND kind = ? AND detail = ?",
   )
@@ -148,7 +174,7 @@ async function processOne(env: Env, telegram: TelegramClient, body: NotifyMessag
   await recordSent(env, body);
 }
 
-async function recordSent(env: Env, body: NotifyMessage): Promise<void> {
+async function recordSent(env: Env, body: Exclude<NotifyMessage, { kind: "queue_refresh" }>): Promise<void> {
   await env.DB.prepare(
     `INSERT INTO notifications_sent (telegram_user_id, consultation_id, kind, detail, sent_at)
      VALUES (?, ?, ?, ?, ?)

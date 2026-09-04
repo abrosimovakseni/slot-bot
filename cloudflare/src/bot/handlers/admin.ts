@@ -19,7 +19,7 @@
  */
 import { getConsultation, deleteConsultation, ensureCreatedAndOpened, listUpcomingConsultations } from "../../db/consultations";
 import { clearState, getState, setState } from "../../db/state";
-import { enqueueConsultationCancelled, enqueueOpeningBroadcast } from "../../notify";
+import { enqueueConsultationCancelled, enqueueOpeningBroadcast, enqueueQueueRefresh } from "../../notify";
 import {
   adminMenuKeyboard,
   cancelAddConsultationKeyboard,
@@ -103,6 +103,10 @@ export async function confirmCreateConsultationYes(
     if (consultation !== null) {
       await enqueueOpeningBroadcast(env, consultation);
     }
+    // A new consultation just became "current" -- anyone with a pinned
+    // queue message should see it reset to this (empty-so-far) queue
+    // rather than keep showing the previous, now-irrelevant one.
+    await enqueueQueueRefresh(env);
   }
 }
 
@@ -183,6 +187,10 @@ export async function executeCancelConsultation(
   if (result.affectedUserIds.length > 0) {
     await enqueueConsultationCancelled(env, consultationId, result.affectedUserIds, label);
   }
+  // The consultation this was is gone -- anyone with a pinned queue
+  // message should stop showing it (falling back to "нет открытой записи"
+  // or whatever consultation is current now).
+  await enqueueQueueRefresh(env);
 }
 
 export async function abortCancelConsultation(
