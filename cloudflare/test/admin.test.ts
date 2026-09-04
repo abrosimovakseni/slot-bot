@@ -122,6 +122,23 @@ describe("admin: create a one-off consultation end-to-end", () => {
     await post(webhookCallback(ADMIN_ID, "admin_create_no"));
   });
 
+  it("'◀️ Отмена' on the date/time prompt itself backs out before typing anything", async () => {
+    await post(webhookCallback(ADMIN_ID, "admin_add_start"));
+    expect((await getUserState(ADMIN_ID))?.state).toBe("ASK_DATETIME");
+
+    await post(webhookCallback(ADMIN_ID, "admin_add_cancel"));
+    expect(await getUserState(ADMIN_ID)).toBeNull();
+  });
+
+  it("'◀️ Отмена' also works after a failed (invalid) attempt", async () => {
+    await post(webhookCallback(ADMIN_ID, "admin_add_start"));
+    await post(webhookMessage(ADMIN_ID, "garbage"));
+    expect((await getUserState(ADMIN_ID))?.state).toBe("ASK_DATETIME"); // still retrying
+
+    await post(webhookCallback(ADMIN_ID, "admin_add_cancel"));
+    expect(await getUserState(ADMIN_ID)).toBeNull();
+  });
+
   it("'Отмена' aborts without creating a consultation", async () => {
     const before = await env.DB.prepare("SELECT COUNT(*) as c FROM consultations WHERE scheduled_at = ?")
       .bind("2031-05-01T09:00:00.000Z")

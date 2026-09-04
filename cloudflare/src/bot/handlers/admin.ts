@@ -22,6 +22,7 @@ import { clearState, getState, setState } from "../../db/state";
 import { enqueueConsultationCancelled, enqueueOpeningBroadcast } from "../../notify";
 import {
   adminMenuKeyboard,
+  cancelAddConsultationKeyboard,
   cancelConsultationListKeyboard,
   confirmCancelConsultationKeyboard,
   confirmCreateConsultationKeyboard,
@@ -50,7 +51,7 @@ export async function startAddConsultation(
   telegramUserId: number,
 ): Promise<void> {
   await setState(env, telegramUserId, "admin_add", "ASK_DATETIME", null);
-  await telegram.sendMessage(chatId, texts.ASK_CONSULTATION_DATETIME);
+  await telegram.sendMessage(chatId, texts.ASK_CONSULTATION_DATETIME, { replyMarkup: cancelAddConsultationKeyboard() });
 }
 
 export async function receiveConsultationDateTime(
@@ -62,11 +63,11 @@ export async function receiveConsultationDateTime(
 ): Promise<void> {
   const parsed = parseMoscowDateTime(rawText);
   if (parsed === null) {
-    await telegram.sendMessage(chatId, texts.INVALID_DATETIME);
+    await telegram.sendMessage(chatId, texts.INVALID_DATETIME, { replyMarkup: cancelAddConsultationKeyboard() });
     return;
   }
   if (parsed.getTime() <= Date.now()) {
-    await telegram.sendMessage(chatId, texts.DATETIME_IN_PAST);
+    await telegram.sendMessage(chatId, texts.DATETIME_IN_PAST, { replyMarkup: cancelAddConsultationKeyboard() });
     return;
   }
   // Reuse pending_name as a generic pending-value slot (it's just TEXT, and
@@ -103,6 +104,20 @@ export async function confirmCreateConsultationYes(
       await enqueueOpeningBroadcast(env, consultation);
     }
   }
+}
+
+/** The "◀️ Отмена" button attached to the date/time prompt itself -- lets
+ * the admin back out before typing anything, or after a failed retry,
+ * without having to type a throwaway value first. */
+export async function abortAddConsultation(
+  env: Env,
+  telegram: TelegramClient,
+  chatId: number,
+  telegramUserId: number,
+  messageId: number,
+): Promise<void> {
+  await clearState(env, telegramUserId);
+  await telegram.editMessageText(chatId, messageId, texts.ADMIN_CANCEL_ABORTED);
 }
 
 export async function confirmCreateConsultationNo(

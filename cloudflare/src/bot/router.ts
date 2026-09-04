@@ -9,6 +9,7 @@ import { getState } from "../db/state";
 import { TelegramClient, type TelegramCallbackQuery, type TelegramMessage, type TelegramUpdate } from "../telegram";
 import type { Env } from "../types";
 import {
+  abortAddConsultation,
   abortCancelConsultation,
   confirmCancelPick,
   confirmCreateConsultationNo,
@@ -132,6 +133,10 @@ async function routeCallback(env: Env, telegram: TelegramClient, cq: TelegramCal
 
   if (data === "admin_add_start") {
     await startAddConsultation(env, telegram, chatId, telegramUserId);
+    return;
+  }
+  if (data === "admin_add_cancel") {
+    await abortAddConsultation(env, telegram, chatId, telegramUserId, messageId);
     return;
   }
   if (data === "admin_create_yes") {

@@ -146,6 +146,12 @@ export function adminMenuKeyboard(): InlineKeyboardMarkup {
   };
 }
 
+/** Attached to every prompt during the "type a date/time" step, so the
+ * admin can back out before (or after a failed retry of) typing anything. */
+export function cancelAddConsultationKeyboard(): InlineKeyboardMarkup {
+  return { inline_keyboard: [[{ text: "◀️ Отмена", callback_data: "admin_add_cancel" }]] };
+}
+
 export function confirmCreateConsultationKeyboard(): InlineKeyboardMarkup {
   return {
     inline_keyboard: [
