@@ -45,8 +45,11 @@ export function positionChanged(position: number): string {
   return `🔄 Очередь изменилась.\nВаше новое место: №${position}`;
 }
 
-export function openingBroadcast(classTimeStr: string): string {
-  return `🔔 Открыта запись на консультацию.\nПара начинается в ${classTimeStr}.`;
+export function openingBroadcast(classTimeStr: string, curator: string, room: string): string {
+  return (
+    `🔔 Открыта запись на консультацию.\nПара начинается в ${classTimeStr}.\n` +
+    `Куратор: ${curator}\nКабинет: ${room}`
+  );
 }
 
 export function profileCard(displayName: string, username: string | null): string {
@@ -73,8 +76,20 @@ export const INVALID_DATETIME =
 
 export const DATETIME_IN_PAST = "Эта дата и время уже в прошлом. Введи другое значение.";
 
-export function confirmCreateConsultation(label: string): string {
-  return `Создать консультацию на ${label} (мск)? Запись откроется за час до начала, как обычно.`;
+export function curatorRoomChoicePrompt(defaultCurator: string, defaultRoom: string): string {
+  return `Куратор и кабинет — как обычно (${defaultCurator}, кабинет ${defaultRoom}), или указать другое?`;
+}
+
+export const ASK_CURATOR_NAME = "Введи имя куратора.";
+export const INVALID_CURATOR_NAME = "Имя куратора не должно быть пустым. Попробуй ещё раз.";
+export const ASK_ROOM = "Введи номер кабинета.";
+export const INVALID_ROOM = "Кабинет не должен быть пустым. Попробуй ещё раз.";
+
+export function confirmCreateConsultation(label: string, curator: string, room: string): string {
+  return (
+    `Создать консультацию на ${label} (мск)?\nКуратор: ${curator}\nКабинет: ${room}\n` +
+    "Запись откроется за час до начала, как обычно."
+  );
 }
 
 /** `opensAtLabel` is null when registration is due right away (the 1-hour
@@ -104,3 +119,22 @@ export function consultationCancelled(label: string): string {
 
 export const ADMIN_ACTION_EXPIRED = "Действие устарело, начни заново через меню «🛠 Админ».";
 export const ADMIN_CANCEL_ABORTED = "Отменено.";
+
+// ---------------------------------------------------------------------------
+// Admin: change curator/room for an existing consultation
+// ---------------------------------------------------------------------------
+export const CHOOSE_CONSULTATION_TO_EDIT = "Для какой консультации изменить куратора/кабинет?";
+
+export function confirmEditDetails(label: string, curator: string, room: string): string {
+  return `Изменить консультацию ${label}?\nНовый куратор: ${curator}\nНовый кабинет: ${room}`;
+}
+
+export function detailsUpdated(label: string): string {
+  return `✅ Данные консультации ${label} обновлены.`;
+}
+
+export function detailsChanged(label: string, curator: string, room: string): string {
+  return (
+    `ℹ️ Для консультации ${label} изменились данные.\n` + `Куратор: ${curator}\nКабинет: ${room}`
+  );
+}

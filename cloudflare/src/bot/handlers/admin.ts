@@ -1,7 +1,8 @@
 /**
- * Admin-only flow: create or cancel a one-off consultation, for a date/time
- * outside the regular Wed/Fri schedule (an extra session, a makeup slot,
- * and so on). Visible only to `env.ADMIN_ID` (the curator's own
+ * Admin-only flows: create or cancel a one-off consultation (for a
+ * date/time outside the regular Wed/Fri schedule -- an extra session, a
+ * makeup slot, and so on), and change the curator/room of an already
+ * existing consultation. Visible only to `env.ADMIN_ID` (the curator's own
  * telegram_user_id, set as a Cloudflare secret) -- every entry point here
  * re-checks `isAdmin()` itself, never trusting the caller, since the menu
  * button that leads here is also just a label anyone could in principle
@@ -19,23 +20,41 @@
  * notification path as everything else in notify.ts, so a cancellation
  * broadcast to a large group is just as safe against the Workers
  * subrequest limit as the opening broadcast is.
+ *
+ * Creating a consultation also asks for its curator and room, defaulting
+ * to config.DEFAULT_CURATOR/DEFAULT_ROOM via the "Как обычно" shortcut --
+ * see the CURATOR_ROOM_CHOICE / ASK_CURATOR / ASK_ROOM states below. A
+ * separate "✏️ Изменить кабинет/куратора" flow (same ASK_CURATOR/ASK_ROOM
+ * states, but under the "admin_edit_details" flow) changes those two
+ * fields on any already-existing upcoming consultation, notifying anyone
+ * already signed up.
  */
-import { ADMIN_CONSULTATION_LEAD_MS } from "../../config";
+import { ADMIN_CONSULTATION_LEAD_MS, DEFAULT_CURATOR, DEFAULT_ROOM } from "../../config";
 import {
+  activeSignupUserIds,
   createConsultationIfAbsent,
   deleteConsultation,
   getConsultation,
   listUpcomingConsultations,
   openDueConsultations,
+  updateConsultationDetails,
 } from "../../db/consultations";
 import { clearState, getState, setState } from "../../db/state";
-import { enqueueConsultationCancelled, enqueueOpeningBroadcast, enqueueQueueRefresh } from "../../notify";
+import {
+  enqueueConsultationCancelled,
+  enqueueDetailsChanged,
+  enqueueOpeningBroadcast,
+  enqueueQueueRefresh,
+} from "../../notify";
 import {
   adminMenuKeyboard,
   cancelAddConsultationKeyboard,
   cancelConsultationListKeyboard,
   confirmCancelConsultationKeyboard,
   confirmCreateConsultationKeyboard,
+  confirmEditDetailsKeyboard,
+  curatorRoomChoiceKeyboard,
+  editDetailsListKeyboard,
   TelegramClient,
 } from "../../telegram";
 import { formatMoscowDateTime, parseMoscowDateTime } from "../../timeUtils";
@@ -83,8 +102,113 @@ export async function receiveConsultationDateTime(
   // Reuse pending_name as a generic pending-value slot (it's just TEXT, and
   // every flow that needs one clears it before the next one starts) --
   // storing the ISO instant here, not free-text, so it round-trips exactly.
-  await setState(env, telegramUserId, "admin_add", "CONFIRM_DATETIME", parsed.toISOString());
-  await telegram.sendMessage(chatId, texts.confirmCreateConsultation(formatMoscowDateTime(parsed)), {
+  await setState(env, telegramUserId, "admin_add", "CURATOR_ROOM_CHOICE", parsed.toISOString());
+  await telegram.sendMessage(chatId, texts.curatorRoomChoicePrompt(DEFAULT_CURATOR, DEFAULT_ROOM), {
+    replyMarkup: curatorRoomChoiceKeyboard(),
+  });
+}
+
+/** "Как обычно" -- accepts the default curator/room without typing anything. */
+export async function chooseDefaultCuratorRoom(
+  env: Env,
+  telegram: TelegramClient,
+  chatId: number,
+  telegramUserId: number,
+  messageId: number,
+): Promise<void> {
+  const state = await getState(env, telegramUserId);
+  if (
+    state === null ||
+    state.flow !== "admin_add" ||
+    state.state !== "CURATOR_ROOM_CHOICE" ||
+    state.pending_name === null
+  ) {
+    await telegram.editMessageText(chatId, messageId, texts.ADMIN_ACTION_EXPIRED);
+    return;
+  }
+  const scheduledAt = new Date(state.pending_name);
+  const pendingExtra = JSON.stringify({ curator: DEFAULT_CURATOR, room: DEFAULT_ROOM });
+  await setState(env, telegramUserId, "admin_add", "CONFIRM_DATETIME", state.pending_name, pendingExtra);
+  await telegram.editMessageText(
+    chatId,
+    messageId,
+    texts.confirmCreateConsultation(formatMoscowDateTime(scheduledAt), DEFAULT_CURATOR, DEFAULT_ROOM),
+    { replyMarkup: confirmCreateConsultationKeyboard() },
+  );
+}
+
+/** "Указать другое" -- the curator will type a one-off curator/room next. */
+export async function chooseCustomCuratorRoom(
+  env: Env,
+  telegram: TelegramClient,
+  chatId: number,
+  telegramUserId: number,
+  messageId: number,
+): Promise<void> {
+  const state = await getState(env, telegramUserId);
+  if (
+    state === null ||
+    state.flow !== "admin_add" ||
+    state.state !== "CURATOR_ROOM_CHOICE" ||
+    state.pending_name === null
+  ) {
+    await telegram.editMessageText(chatId, messageId, texts.ADMIN_ACTION_EXPIRED);
+    return;
+  }
+  await setState(env, telegramUserId, "admin_add", "ASK_CURATOR", state.pending_name);
+  await telegram.editMessageText(chatId, messageId, texts.ASK_CURATOR_NAME);
+}
+
+export async function receiveCuratorName(
+  env: Env,
+  telegram: TelegramClient,
+  chatId: number,
+  telegramUserId: number,
+  rawText: string,
+): Promise<void> {
+  const curator = rawText.trim();
+  if (curator === "") {
+    await telegram.sendMessage(chatId, texts.INVALID_CURATOR_NAME);
+    return;
+  }
+  const state = await getState(env, telegramUserId);
+  if (state === null || state.pending_name === null) {
+    await telegram.sendMessage(chatId, texts.ADMIN_ACTION_EXPIRED);
+    return;
+  }
+  await setState(env, telegramUserId, "admin_add", "ASK_ROOM", state.pending_name, JSON.stringify({ curator }));
+  await telegram.sendMessage(chatId, texts.ASK_ROOM);
+}
+
+export async function receiveRoom(
+  env: Env,
+  telegram: TelegramClient,
+  chatId: number,
+  telegramUserId: number,
+  rawText: string,
+): Promise<void> {
+  const room = rawText.trim();
+  if (room === "") {
+    await telegram.sendMessage(chatId, texts.INVALID_ROOM);
+    return;
+  }
+  const state = await getState(env, telegramUserId);
+  if (state === null || state.pending_name === null) {
+    await telegram.sendMessage(chatId, texts.ADMIN_ACTION_EXPIRED);
+    return;
+  }
+  const extra = state.pending_extra !== null ? (JSON.parse(state.pending_extra) as { curator?: string }) : {};
+  const curator = extra.curator ?? DEFAULT_CURATOR;
+  const scheduledAt = new Date(state.pending_name);
+  await setState(
+    env,
+    telegramUserId,
+    "admin_add",
+    "CONFIRM_DATETIME",
+    state.pending_name,
+    JSON.stringify({ curator, room }),
+  );
+  await telegram.sendMessage(chatId, texts.confirmCreateConsultation(formatMoscowDateTime(scheduledAt), curator, room), {
     replyMarkup: confirmCreateConsultationKeyboard(),
   });
 }
@@ -102,11 +226,15 @@ export async function confirmCreateConsultationYes(
     return;
   }
   const scheduledAt = new Date(state.pending_name);
+  const extra =
+    state.pending_extra !== null ? (JSON.parse(state.pending_extra) as { curator?: string; room?: string }) : {};
+  const curator = extra.curator ?? DEFAULT_CURATOR;
+  const room = extra.room ?? DEFAULT_ROOM;
   await clearState(env, telegramUserId);
 
   const label = formatMoscowDateTime(scheduledAt);
   const opensAt = new Date(scheduledAt.getTime() - ADMIN_CONSULTATION_LEAD_MS);
-  const { consultationId } = await createConsultationIfAbsent(env, label, scheduledAt, opensAt);
+  const { consultationId } = await createConsultationIfAbsent(env, label, scheduledAt, opensAt, curator, room);
 
   // If the hour-before mark has already arrived (the curator picked a time
   // less than an hour out), open it right now instead of waiting for the
@@ -133,7 +261,9 @@ export async function confirmCreateConsultationYes(
 
 /** The "◀️ Отмена" button attached to the date/time prompt itself -- lets
  * the admin back out before typing anything, or after a failed retry,
- * without having to type a throwaway value first. */
+ * without having to type a throwaway value first. Also reused as the
+ * catch-all abort for every later create-flow step (curator/room choice,
+ * ASK_CURATOR, ASK_ROOM), since it just clears whatever's pending. */
 export async function abortAddConsultation(
   env: Env,
   telegram: TelegramClient,
@@ -220,5 +350,155 @@ export async function abortCancelConsultation(
   chatId: number,
   messageId: number,
 ): Promise<void> {
+  await telegram.editMessageText(chatId, messageId, texts.ADMIN_CANCEL_ABORTED);
+}
+
+// ---------------------------------------------------------------------------
+// Edit curator/room for an existing consultation
+// ---------------------------------------------------------------------------
+export async function startEditDetails(env: Env, telegram: TelegramClient, chatId: number): Promise<void> {
+  const upcoming = await listUpcomingConsultations(env);
+  if (upcoming.length === 0) {
+    await telegram.sendMessage(chatId, texts.NO_UPCOMING_CONSULTATIONS);
+    return;
+  }
+  const items = upcoming.map((c) => ({ id: c.id, label: formatMoscowDateTime(new Date(c.scheduled_at)) }));
+  await telegram.sendMessage(chatId, texts.CHOOSE_CONSULTATION_TO_EDIT, {
+    replyMarkup: editDetailsListKeyboard(items),
+  });
+}
+
+export async function pickForEdit(
+  env: Env,
+  telegram: TelegramClient,
+  chatId: number,
+  telegramUserId: number,
+  messageId: number,
+  consultationId: number,
+): Promise<void> {
+  const consultation = await getConsultation(env, consultationId);
+  if (consultation === null || consultation.finalized_at !== null) {
+    await telegram.editMessageText(chatId, messageId, texts.NO_UPCOMING_CONSULTATIONS);
+    return;
+  }
+  // pending_name carries the consultation id (as text) through this flow,
+  // the same generic-slot trick used for the ISO datetime in admin_add.
+  await setState(env, telegramUserId, "admin_edit_details", "ASK_CURATOR", String(consultationId));
+  await telegram.editMessageText(chatId, messageId, texts.ASK_CURATOR_NAME);
+}
+
+export async function receiveEditCurator(
+  env: Env,
+  telegram: TelegramClient,
+  chatId: number,
+  telegramUserId: number,
+  rawText: string,
+): Promise<void> {
+  const curator = rawText.trim();
+  if (curator === "") {
+    await telegram.sendMessage(chatId, texts.INVALID_CURATOR_NAME);
+    return;
+  }
+  const state = await getState(env, telegramUserId);
+  if (state === null || state.pending_name === null) {
+    await telegram.sendMessage(chatId, texts.ADMIN_ACTION_EXPIRED);
+    return;
+  }
+  await setState(
+    env,
+    telegramUserId,
+    "admin_edit_details",
+    "ASK_ROOM",
+    state.pending_name,
+    JSON.stringify({ curator }),
+  );
+  await telegram.sendMessage(chatId, texts.ASK_ROOM);
+}
+
+export async function receiveEditRoom(
+  env: Env,
+  telegram: TelegramClient,
+  chatId: number,
+  telegramUserId: number,
+  rawText: string,
+): Promise<void> {
+  const room = rawText.trim();
+  if (room === "") {
+    await telegram.sendMessage(chatId, texts.INVALID_ROOM);
+    return;
+  }
+  const state = await getState(env, telegramUserId);
+  if (state === null || state.pending_name === null) {
+    await telegram.sendMessage(chatId, texts.ADMIN_ACTION_EXPIRED);
+    return;
+  }
+  const extra = state.pending_extra !== null ? (JSON.parse(state.pending_extra) as { curator?: string }) : {};
+  const curator = extra.curator ?? "";
+  const consultationId = Number(state.pending_name);
+  const consultation = await getConsultation(env, consultationId);
+  if (consultation === null) {
+    await clearState(env, telegramUserId);
+    await telegram.sendMessage(chatId, texts.ADMIN_ACTION_EXPIRED);
+    return;
+  }
+  const label = formatMoscowDateTime(new Date(consultation.scheduled_at));
+  await setState(
+    env,
+    telegramUserId,
+    "admin_edit_details",
+    "CONFIRM_EDIT_DETAILS",
+    state.pending_name,
+    JSON.stringify({ curator, room }),
+  );
+  await telegram.sendMessage(chatId, texts.confirmEditDetails(label, curator, room), {
+    replyMarkup: confirmEditDetailsKeyboard(consultationId),
+  });
+}
+
+export async function confirmEditDetailsYes(
+  env: Env,
+  telegram: TelegramClient,
+  chatId: number,
+  telegramUserId: number,
+  messageId: number,
+  consultationId: number,
+): Promise<void> {
+  const state = await getState(env, telegramUserId);
+  if (
+    state === null ||
+    state.flow !== "admin_edit_details" ||
+    state.pending_name !== String(consultationId) ||
+    state.pending_extra === null
+  ) {
+    await telegram.editMessageText(chatId, messageId, texts.ADMIN_ACTION_EXPIRED);
+    return;
+  }
+  const { curator, room } = JSON.parse(state.pending_extra) as { curator: string; room: string };
+  await clearState(env, telegramUserId);
+
+  const consultation = await getConsultation(env, consultationId);
+  if (consultation === null) {
+    await telegram.editMessageText(chatId, messageId, texts.ADMIN_ACTION_EXPIRED);
+    return;
+  }
+  const label = formatMoscowDateTime(new Date(consultation.scheduled_at));
+  await updateConsultationDetails(env, consultationId, curator, room);
+  await telegram.editMessageText(chatId, messageId, texts.detailsUpdated(label));
+
+  const affectedUserIds = await activeSignupUserIds(env, consultationId);
+  if (affectedUserIds.length > 0) {
+    await enqueueDetailsChanged(env, consultationId, affectedUserIds, label, curator, room);
+  }
+  await enqueueQueueRefresh(env);
+}
+
+export async function confirmEditDetailsNo(
+  env: Env,
+  telegram: TelegramClient,
+  chatId: number,
+  telegramUserId: number,
+  messageId: number,
+): Promise<void> {
+  await clearState(env, telegramUserId);
   await telegram.editMessageText(chatId, messageId, texts.ADMIN_CANCEL_ABORTED);
 }

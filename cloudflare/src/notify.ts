@@ -27,7 +27,7 @@
  * failure is still retried, but a redelivered *already-sent* message is a
  * safe no-op.
  */
-import { consultationCancelled, openingBroadcast, positionChanged } from "./bot/texts";
+import { consultationCancelled, detailsChanged, openingBroadcast, positionChanged } from "./bot/texts";
 import { markBlocked, pinnedQueueViewerIds } from "./db/users";
 import { refreshPinnedQueueMessageForUser } from "./pinnedQueue";
 import { signupInlineKeyboard, TelegramClient } from "./telegram";
@@ -52,6 +52,8 @@ export async function enqueueOpeningBroadcast(env: Env, consultation: Consultati
     telegramUserId: u.telegram_user_id,
     consultationId: consultation.id,
     detail: classTimeStr,
+    curator: consultation.curator,
+    room: consultation.room,
   }));
 
   for (const batch of chunk(messages, CHUNK_SIZE)) {
@@ -88,6 +90,32 @@ export async function enqueuePositionChanged(
     telegramUserId,
     consultationId,
     detail: String(position),
+  }));
+  for (const batch of chunk(messages, CHUNK_SIZE)) {
+    await env.NOTIFY_QUEUE.sendBatch(batch.map((body) => ({ body })));
+  }
+}
+
+/** Admin changed the curator/room of a consultation someone's already
+ * signed up for (see the "✏️ Изменить кабинет/куратора" admin action) --
+ * everyone with an active signup for it is told, once per distinct edit
+ * (see NotifyMessage's "details_changed" doc comment for the dedupe key). */
+export async function enqueueDetailsChanged(
+  env: Env,
+  consultationId: number,
+  telegramUserIds: number[],
+  label: string,
+  curator: string,
+  room: string,
+): Promise<void> {
+  const messages: NotifyMessage[] = telegramUserIds.map((telegramUserId) => ({
+    kind: "details_changed",
+    telegramUserId,
+    consultationId,
+    detail: `${curator}|${room}`,
+    label,
+    curator,
+    room,
   }));
   for (const batch of chunk(messages, CHUNK_SIZE)) {
     await env.NOTIFY_QUEUE.sendBatch(batch.map((body) => ({ body })));
@@ -153,10 +181,12 @@ async function processOne(env: Env, telegram: TelegramClient, body: NotifyMessag
 
   const text =
     body.kind === "opening"
-      ? openingBroadcast(body.detail)
+      ? openingBroadcast(body.detail, body.curator, body.room)
       : body.kind === "position_changed"
         ? positionChanged(Number(body.detail))
-        : consultationCancelled(body.detail);
+        : body.kind === "details_changed"
+          ? detailsChanged(body.label, body.curator, body.room)
+          : consultationCancelled(body.detail);
   const replyMarkup = body.kind === "opening" ? signupInlineKeyboard(body.consultationId) : undefined;
 
   const result = await telegram.sendMessage(body.telegramUserId, text, { replyMarkup });

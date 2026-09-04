@@ -35,6 +35,17 @@ export const PRIORITY_SLOTS = 5;
 export const ADMIN_CONSULTATION_LEAD_MS = 60 * 60_000;
 
 /**
+ * The usual curator and room for a consultation -- applied automatically
+ * to every regular Wed/Fri occurrence and offered as the "как обычно"
+ * shortcut when the curator adds a one-off consultation. Either can be
+ * overridden per consultation (at creation, or afterwards via the
+ * "✏️ Изменить кабинет/куратора" admin action) for the odd week the usual
+ * room is taken.
+ */
+export const DEFAULT_CURATOR = "Любовь Котлярова";
+export const DEFAULT_ROOM = "332";
+
+/**
  * Europe/Moscow is UTC+3 year-round -- Russia abolished seasonal clock
  * changes in 2014, so unlike most "Europe/..." zones this offset never
  * needs DST-aware conversion. Cloudflare Cron Triggers only understand UTC,

@@ -172,24 +172,39 @@ export interface CreateResult {
  * regular Wed/Fri schedule, once `registration_opens_at` (normally one
  * hour before class -- config.ADMIN_CONSULTATION_LEAD_MS) actually
  * arrives. See openDueConsultations() below for the "open when due" half.
+ *
+ * `curator`/`room` default to config.DEFAULT_CURATOR/DEFAULT_ROOM at the
+ * database level (migrations/0003), so omitting them here is exactly the
+ * "как обычно" choice in the admin flow.
  */
 export async function createConsultationIfAbsent(
   env: Env,
   label: string,
   scheduledAt: Date,
   opensAt: Date,
+  curator?: string,
+  room?: string,
 ): Promise<CreateResult> {
   const scheduledIso = scheduledAt.toISOString();
   const opensIso = opensAt.toISOString();
   const nowIso = new Date().toISOString();
 
-  const insert = await env.DB.prepare(
-    `INSERT INTO consultations (label, scheduled_at, registration_opens_at, created_at)
-     SELECT ?, ?, ?, ?
-     WHERE NOT EXISTS (SELECT 1 FROM consultations WHERE scheduled_at = ?)`,
-  )
-    .bind(label, scheduledIso, opensIso, nowIso, scheduledIso)
-    .run();
+  const insert =
+    curator !== undefined && room !== undefined
+      ? await env.DB.prepare(
+          `INSERT INTO consultations (label, scheduled_at, registration_opens_at, created_at, curator, room)
+           SELECT ?, ?, ?, ?, ?, ?
+           WHERE NOT EXISTS (SELECT 1 FROM consultations WHERE scheduled_at = ?)`,
+        )
+          .bind(label, scheduledIso, opensIso, nowIso, curator, room, scheduledIso)
+          .run()
+      : await env.DB.prepare(
+          `INSERT INTO consultations (label, scheduled_at, registration_opens_at, created_at)
+           SELECT ?, ?, ?, ?
+           WHERE NOT EXISTS (SELECT 1 FROM consultations WHERE scheduled_at = ?)`,
+        )
+          .bind(label, scheduledIso, opensIso, nowIso, scheduledIso)
+          .run();
 
   let consultationId: number;
   const created = (insert.meta.changes ?? 0) === 1;
@@ -369,4 +384,31 @@ export async function deleteConsultation(env: Env, consultationId: number): Prom
   ]);
   const existed = (results[1]!.meta.changes ?? 0) === 1;
   return { existed, affectedUserIds: existed ? activeSignups.map((s) => s.user_id) : [] };
+}
+
+/** telegram_user_ids with an active signup for a consultation -- who to
+ * notify when its curator/room changes (see "✏️ Изменить кабинет/куратора"
+ * in bot/handlers/admin.ts). */
+export async function activeSignupUserIds(env: Env, consultationId: number): Promise<number[]> {
+  const { results } = await env.DB.prepare("SELECT user_id FROM signups WHERE consultation_id = ? AND active = 1")
+    .bind(consultationId)
+    .all<{ user_id: number }>();
+  return results.map((r) => r.user_id);
+}
+
+/**
+ * Changes who's teaching a consultation and/or its room, in place -- the
+ * consultation keeps its id and every existing signup, only these two
+ * fields change. Used when the usual room turns out to be unavailable for
+ * a given week; see activeSignupUserIds() above for who needs telling.
+ */
+export async function updateConsultationDetails(
+  env: Env,
+  consultationId: number,
+  curator: string,
+  room: string,
+): Promise<void> {
+  await env.DB.prepare("UPDATE consultations SET curator = ?, room = ? WHERE id = ?")
+    .bind(curator, room, consultationId)
+    .run();
 }

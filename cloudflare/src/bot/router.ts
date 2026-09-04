@@ -11,15 +11,25 @@ import type { Env } from "../types";
 import {
   abortAddConsultation,
   abortCancelConsultation,
+  chooseCustomCuratorRoom,
+  chooseDefaultCuratorRoom,
   confirmCancelPick,
   confirmCreateConsultationNo,
   confirmCreateConsultationYes,
+  confirmEditDetailsNo,
+  confirmEditDetailsYes,
   executeCancelConsultation,
   isAdmin,
+  pickForEdit,
   receiveConsultationDateTime,
+  receiveCuratorName,
+  receiveEditCurator,
+  receiveEditRoom,
+  receiveRoom,
   showAdminMenu,
   showCancelList,
   startAddConsultation,
+  startEditDetails,
 } from "./handlers/admin";
 import { confirmEdit, confirmYes, receiveName } from "./handlers/nameFlow";
 import { editNameEntry, showProfile } from "./handlers/profile";
@@ -60,14 +70,27 @@ async function routeMessage(env: Env, telegram: TelegramClient, message: Telegra
       await receiveName(env, telegram, chatId, telegramUserId, rawText, state.flow as "register" | "edit");
       return;
     }
-    if (
-      state !== null &&
-      state.flow === "admin_add" &&
-      state.state === "ASK_DATETIME" &&
-      isAdmin(env, telegramUserId)
-    ) {
-      await receiveConsultationDateTime(env, telegram, chatId, telegramUserId, rawText);
-      return;
+    if (state !== null && isAdmin(env, telegramUserId)) {
+      if (state.flow === "admin_add" && state.state === "ASK_DATETIME") {
+        await receiveConsultationDateTime(env, telegram, chatId, telegramUserId, rawText);
+        return;
+      }
+      if (state.flow === "admin_add" && state.state === "ASK_CURATOR") {
+        await receiveCuratorName(env, telegram, chatId, telegramUserId, rawText);
+        return;
+      }
+      if (state.flow === "admin_add" && state.state === "ASK_ROOM") {
+        await receiveRoom(env, telegram, chatId, telegramUserId, rawText);
+        return;
+      }
+      if (state.flow === "admin_edit_details" && state.state === "ASK_CURATOR") {
+        await receiveEditCurator(env, telegram, chatId, telegramUserId, rawText);
+        return;
+      }
+      if (state.flow === "admin_edit_details" && state.state === "ASK_ROOM") {
+        await receiveEditRoom(env, telegram, chatId, telegramUserId, rawText);
+        return;
+      }
     }
   }
 
@@ -167,6 +190,36 @@ async function routeCallback(env: Env, telegram: TelegramClient, cq: TelegramCal
   }
   if (data.startsWith("admin_cancel_no")) {
     await abortCancelConsultation(env, telegram, chatId, messageId);
+    return;
+  }
+  if (data === "admin_curator_default") {
+    await chooseDefaultCuratorRoom(env, telegram, chatId, telegramUserId, messageId);
+    return;
+  }
+  if (data === "admin_curator_custom") {
+    await chooseCustomCuratorRoom(env, telegram, chatId, telegramUserId, messageId);
+    return;
+  }
+  if (data === "admin_edit_details_start") {
+    await startEditDetails(env, telegram, chatId);
+    return;
+  }
+  if (data.startsWith("admin_edit_pick:")) {
+    const consultationId = Number(data.slice("admin_edit_pick:".length));
+    if (Number.isFinite(consultationId)) {
+      await pickForEdit(env, telegram, chatId, telegramUserId, messageId, consultationId);
+    }
+    return;
+  }
+  if (data.startsWith("admin_edit_yes:")) {
+    const consultationId = Number(data.slice("admin_edit_yes:".length));
+    if (Number.isFinite(consultationId)) {
+      await confirmEditDetailsYes(env, telegram, chatId, telegramUserId, messageId, consultationId);
+    }
+    return;
+  }
+  if (data.startsWith("admin_edit_no")) {
+    await confirmEditDetailsNo(env, telegram, chatId, telegramUserId, messageId);
     return;
   }
 }

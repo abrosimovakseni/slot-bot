@@ -87,6 +87,8 @@ describe("processNotifyBatch: mass broadcast", () => {
       telegramUserId: uid,
       consultationId,
       detail: "10:30",
+      curator: "Любовь Котлярова",
+      room: "332",
     }));
     const batch = makeBatch(messages);
     const ctx = createExecutionContext();
@@ -107,7 +109,9 @@ describe("processNotifyBatch: mass broadcast", () => {
     const userId = await makeUser(env);
     outcomeByChatId.set(userId, "blocked");
 
-    const batch = makeBatch([{ kind: "opening", telegramUserId: userId, consultationId, detail: "10:30" }]);
+    const batch = makeBatch([
+      { kind: "opening", telegramUserId: userId, consultationId, detail: "10:30", curator: "Любовь Котлярова", room: "332" },
+    ]);
     const ctx = createExecutionContext();
     await processNotifyBatch(batch, env);
     const result = await getQueueResult(batch, ctx);
@@ -135,6 +139,8 @@ describe("processNotifyBatch: mass broadcast", () => {
       telegramUserId: uid,
       consultationId,
       detail: "10:30",
+      curator: "Любовь Котлярова",
+      room: "332",
     }));
     const batch = makeBatch(messages);
     const ctx = createExecutionContext();
@@ -157,7 +163,14 @@ describe("processNotifyBatch: idempotent redelivery", () => {
     const userId = await makeUser(env);
     outcomeByChatId.set(userId, "ok");
 
-    const message: NotifyMessage = { kind: "opening", telegramUserId: userId, consultationId, detail: "10:30" };
+    const message: NotifyMessage = {
+      kind: "opening",
+      telegramUserId: userId,
+      consultationId,
+      detail: "10:30",
+      curator: "Любовь Котлярова",
+      room: "332",
+    };
 
     let ctx = createExecutionContext();
     await processNotifyBatch(makeBatch([message]), env);

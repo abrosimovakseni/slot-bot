@@ -1,12 +1,12 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { listUpcomingConsultations } from "../src/db/consultations";
 import { signupUser } from "../src/db/queue";
 import worker from "../src/index";
 import { isAdmin } from "../src/bot/handlers/admin";
 import { BTN_ADMIN } from "../src/bot/texts";
 import { formatMoscowDateTime } from "../src/timeUtils";
-import type { UserStateRow } from "../src/types";
+import type { NotifyMessage, UserStateRow } from "../src/types";
 import { createOpenConsultation, makeUser } from "./helpers";
 
 const ADMIN_ID = Number(env.ADMIN_ID); // "1", set in vitest.config.ts -- outside makeUser()'s id range
@@ -89,8 +89,13 @@ describe("admin: create a one-off consultation end-to-end", () => {
 
     await post(webhookMessage(ADMIN_ID, "20.09.2030 15:00"));
     state = await getUserState(ADMIN_ID);
-    expect(state?.state).toBe("CONFIRM_DATETIME");
+    expect(state?.state).toBe("CURATOR_ROOM_CHOICE");
     expect(state?.pending_name).toBe("2030-09-20T12:00:00.000Z"); // 15:00 MSK -> 12:00 UTC
+
+    // "Как обычно" -- accept the default curator/room without typing anything.
+    await post(webhookCallback(ADMIN_ID, "admin_curator_default"));
+    state = await getUserState(ADMIN_ID);
+    expect(state?.state).toBe("CONFIRM_DATETIME");
 
     await post(webhookCallback(ADMIN_ID, "admin_create_yes"));
     expect(await getUserState(ADMIN_ID)).toBeNull(); // state cleared after creating
@@ -104,6 +109,8 @@ describe("admin: create a one-off consultation end-to-end", () => {
         registration_opens_at: string;
         opened_notified_at: string | null;
         finalized_at: string | null;
+        curator: string;
+        room: string;
       }>();
     expect(row).not.toBeNull();
     // Not open yet -- this is 2030, registration only opens one hour before
@@ -112,6 +119,55 @@ describe("admin: create a one-off consultation end-to-end", () => {
     expect(row!.registration_opens_at).toBe("2030-09-20T11:00:00.000Z");
     expect(row!.opened_notified_at).toBeNull();
     expect(row!.finalized_at).toBeNull();
+    expect(row!.curator).toBe("Любовь Котлярова");
+    expect(row!.room).toBe("332");
+  });
+
+  it("add -> type a datetime -> 'Указать другое' -> type curator and room -> confirm creates it with those values", async () => {
+    await post(webhookCallback(ADMIN_ID, "admin_add_start"));
+    await post(webhookMessage(ADMIN_ID, "21.09.2030 16:00"));
+    expect((await getUserState(ADMIN_ID))?.state).toBe("CURATOR_ROOM_CHOICE");
+
+    await post(webhookCallback(ADMIN_ID, "admin_curator_custom"));
+    expect((await getUserState(ADMIN_ID))?.state).toBe("ASK_CURATOR");
+
+    await post(webhookMessage(ADMIN_ID, "Иван Иванов"));
+    let state = await getUserState(ADMIN_ID);
+    expect(state?.state).toBe("ASK_ROOM");
+    expect(state?.pending_extra).toBe(JSON.stringify({ curator: "Иван Иванов" }));
+
+    await post(webhookMessage(ADMIN_ID, "404"));
+    state = await getUserState(ADMIN_ID);
+    expect(state?.state).toBe("CONFIRM_DATETIME");
+    expect(state?.pending_extra).toBe(JSON.stringify({ curator: "Иван Иванов", room: "404" }));
+
+    await post(webhookCallback(ADMIN_ID, "admin_create_yes"));
+    expect(await getUserState(ADMIN_ID)).toBeNull();
+
+    const row = await env.DB.prepare("SELECT curator, room FROM consultations WHERE scheduled_at = ?")
+      .bind("2030-09-21T13:00:00.000Z")
+      .first<{ curator: string; room: string }>();
+    expect(row).not.toBeNull();
+    expect(row!.curator).toBe("Иван Иванов");
+    expect(row!.room).toBe("404");
+  });
+
+  it("an empty curator name or room is rejected and re-prompted", async () => {
+    await post(webhookCallback(ADMIN_ID, "admin_add_start"));
+    await post(webhookMessage(ADMIN_ID, "22.09.2030 16:00"));
+    await post(webhookCallback(ADMIN_ID, "admin_curator_custom"));
+
+    await post(webhookMessage(ADMIN_ID, "   "));
+    expect((await getUserState(ADMIN_ID))?.state).toBe("ASK_CURATOR"); // never advanced
+
+    await post(webhookMessage(ADMIN_ID, "Куратор"));
+    expect((await getUserState(ADMIN_ID))?.state).toBe("ASK_ROOM");
+
+    await post(webhookMessage(ADMIN_ID, ""));
+    expect((await getUserState(ADMIN_ID))?.state).toBe("ASK_ROOM"); // still stuck, empty room rejected
+
+    await post(webhookCallback(ADMIN_ID, "admin_add_cancel"));
+    expect(await getUserState(ADMIN_ID)).toBeNull();
   });
 
   it("creating one for less than an hour from now opens it immediately, same as before", async () => {
@@ -217,5 +273,76 @@ describe("admin: cancel a consultation end-to-end", () => {
 
     const still = await env.DB.prepare("SELECT id FROM consultations WHERE id = ?").bind(consultationId).first();
     expect(still).not.toBeNull();
+  });
+});
+
+describe("admin: change curator/room for an existing consultation end-to-end", () => {
+  it("pick -> type curator -> type room -> confirm updates the row and notifies active signups", async () => {
+    const consultationId = await createOpenConsultation(env, "Куратор меняется");
+    const studentId = await makeUser(env);
+    await signupUser(env, consultationId, studentId);
+
+    await post(webhookCallback(ADMIN_ID, "admin_edit_details_start"));
+    await post(webhookCallback(ADMIN_ID, `admin_edit_pick:${consultationId}`));
+    let state = await getUserState(ADMIN_ID);
+    expect(state?.flow).toBe("admin_edit_details");
+    expect(state?.state).toBe("ASK_CURATOR");
+    expect(state?.pending_name).toBe(String(consultationId));
+
+    await post(webhookMessage(ADMIN_ID, "Новый Куратор"));
+    state = await getUserState(ADMIN_ID);
+    expect(state?.state).toBe("ASK_ROOM");
+
+    await post(webhookMessage(ADMIN_ID, "101"));
+    state = await getUserState(ADMIN_ID);
+    expect(state?.state).toBe("CONFIRM_EDIT_DETAILS");
+
+    // Spy on the queue producer rather than notifications_sent -- that table
+    // is only populated once the queue *consumer* processes the message
+    // (see test/notify.test.ts), which this webhook-only harness never
+    // drives on its own (same pattern as test/pinnedQueueWiring.test.ts).
+    const sendBatchSpy = vi.spyOn(env.NOTIFY_QUEUE, "sendBatch");
+    await post(webhookCallback(ADMIN_ID, `admin_edit_yes:${consultationId}`));
+    expect(await getUserState(ADMIN_ID)).toBeNull();
+
+    const row = await env.DB.prepare("SELECT curator, room FROM consultations WHERE id = ?")
+      .bind(consultationId)
+      .first<{ curator: string; room: string }>();
+    expect(row!.curator).toBe("Новый Куратор");
+    expect(row!.room).toBe("101");
+
+    const enqueued: NotifyMessage[] = sendBatchSpy.mock.calls.flatMap((call) =>
+      (call[0] as Array<{ body: NotifyMessage }>).map((m) => m.body),
+    );
+    sendBatchSpy.mockRestore();
+    const detailsChangedForStudent = enqueued.find(
+      (m) => m.kind === "details_changed" && m.telegramUserId === studentId && m.consultationId === consultationId,
+    );
+    expect(detailsChangedForStudent).toMatchObject({ curator: "Новый Куратор", room: "101" });
+  });
+
+  it("'Отмена' during the edit confirmation leaves the consultation untouched", async () => {
+    const consultationId = await createOpenConsultation(env, "Не трогать");
+    const before = await env.DB.prepare("SELECT curator, room FROM consultations WHERE id = ?")
+      .bind(consultationId)
+      .first<{ curator: string; room: string }>();
+
+    await post(webhookCallback(ADMIN_ID, `admin_edit_pick:${consultationId}`));
+    await post(webhookMessage(ADMIN_ID, "Кто-то"));
+    await post(webhookMessage(ADMIN_ID, "999"));
+    await post(webhookCallback(ADMIN_ID, `admin_edit_no:${consultationId}`));
+
+    expect(await getUserState(ADMIN_ID)).toBeNull();
+    const after = await env.DB.prepare("SELECT curator, room FROM consultations WHERE id = ?")
+      .bind(consultationId)
+      .first<{ curator: string; room: string }>();
+    expect(after).toEqual(before);
+  });
+
+  it("with nothing upcoming, the picker says so instead of showing an empty list", async () => {
+    await post(webhookCallback(ADMIN_ID, "admin_edit_details_start"));
+    // No throw, no 500 -- `post()` already asserted status 200. There's
+    // nothing in D1 to assert on here beyond "it didn't crash", since the
+    // NO_UPCOMING_CONSULTATIONS reply isn't observable from this harness.
   });
 });

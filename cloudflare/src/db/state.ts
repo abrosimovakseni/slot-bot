@@ -18,19 +18,21 @@ export async function getState(env: Env, telegramUserId: number): Promise<UserSt
 export async function setState(
   env: Env,
   telegramUserId: number,
-  flow: "register" | "edit" | "admin_add",
-  state: "ASK_NAME" | "CONFIRM_NAME" | "ASK_DATETIME" | "CONFIRM_DATETIME",
+  flow: UserStateRow["flow"],
+  state: UserStateRow["state"],
   pendingName: string | null,
+  pendingExtra: string | null = null,
 ): Promise<void> {
   const now = new Date().toISOString();
   await env.DB.prepare(
-    `INSERT INTO user_state (telegram_user_id, flow, state, pending_name, updated_at)
-     VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO user_state (telegram_user_id, flow, state, pending_name, pending_extra, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT (telegram_user_id) DO UPDATE SET
        flow = excluded.flow, state = excluded.state,
-       pending_name = excluded.pending_name, updated_at = excluded.updated_at`,
+       pending_name = excluded.pending_name, pending_extra = excluded.pending_extra,
+       updated_at = excluded.updated_at`,
   )
-    .bind(telegramUserId, flow, state, pendingName, now)
+    .bind(telegramUserId, flow, state, pendingName, pendingExtra, now)
     .run();
 }
 

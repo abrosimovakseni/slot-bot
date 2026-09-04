@@ -163,6 +163,21 @@ export function adminMenuKeyboard(): InlineKeyboardMarkup {
     inline_keyboard: [
       [{ text: "➕ Добавить консультацию", callback_data: "admin_add_start" }],
       [{ text: "🗑 Отменить консультацию", callback_data: "admin_cancel_list" }],
+      [{ text: "✏️ Изменить кабинет/куратора", callback_data: "admin_edit_details_start" }],
+    ],
+  };
+}
+
+/** Shown right after a valid date/time is entered, so the admin can accept
+ * the usual curator/room or type a one-off replacement. */
+export function curatorRoomChoiceKeyboard(): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [
+        { text: "Как обычно", callback_data: "admin_curator_default" },
+        { text: "Указать другое", callback_data: "admin_curator_custom" },
+      ],
+      [{ text: "◀️ Отмена", callback_data: "admin_add_cancel" }],
     ],
   };
 }
@@ -194,6 +209,24 @@ export function confirmCancelConsultationKeyboard(consultationId: number): Inlin
       [
         { text: "Да, отменить", callback_data: `admin_cancel_yes:${consultationId}` },
         { text: "Нет", callback_data: `admin_cancel_no:${consultationId}` },
+      ],
+    ],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Admin: change curator/room for an existing consultation
+// ---------------------------------------------------------------------------
+export function editDetailsListKeyboard(items: Array<{ id: number; label: string }>): InlineKeyboardMarkup {
+  return { inline_keyboard: items.map((it) => [{ text: it.label, callback_data: `admin_edit_pick:${it.id}` }]) };
+}
+
+export function confirmEditDetailsKeyboard(consultationId: number): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [
+        { text: "Да", callback_data: `admin_edit_yes:${consultationId}` },
+        { text: "Отмена", callback_data: `admin_edit_no:${consultationId}` },
       ],
     ],
   };

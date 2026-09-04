@@ -2,13 +2,36 @@
 
 export type NotifyMessage =
   | {
-      kind: "opening" | "position_changed" | "consultation_cancelled";
+      kind: "opening";
       telegramUserId: number;
       consultationId: number;
-      /** For "opening": the class time string (HH:MM) to show. For
-       * "position_changed": the new 1-based position. For
+      /** The class time string (HH:MM) to show. */
+      detail: string;
+      curator: string;
+      room: string;
+    }
+  | {
+      kind: "position_changed" | "consultation_cancelled";
+      telegramUserId: number;
+      consultationId: number;
+      /** For "position_changed": the new 1-based position. For
        * "consultation_cancelled": the human-readable date/time label. */
       detail: string;
+    }
+  | {
+      /** The curator changed who's teaching and/or the room for a
+       * consultation someone's already signed up for (see the "✏️ Изменить
+       * кабинет/куратора" admin action). `detail` is `${curator}|${room}`
+       * -- not shown to the recipient, just there so notifications_sent's
+       * dedupe treats two different edits as two different notifications,
+       * while a retried delivery of the *same* edit still dedupes as one. */
+      kind: "details_changed";
+      telegramUserId: number;
+      consultationId: number;
+      detail: string;
+      label: string;
+      curator: string;
+      room: string;
     }
   | {
       /** "The pinned queue-status message for this user may be stale --
@@ -54,6 +77,11 @@ export interface ConsultationRow {
   created_at: string;
   opened_notified_at: string | null;
   finalized_at: string | null;
+  /** Who's teaching it and where -- defaults to config.DEFAULT_CURATOR /
+   * DEFAULT_ROOM, editable per consultation (see bot/handlers/admin.ts's
+   * "✏️ Изменить кабинет/куратора" flow). */
+  curator: string;
+  room: string;
 }
 
 export interface SignupRow {
@@ -69,8 +97,20 @@ export interface SignupRow {
 
 export interface UserStateRow {
   telegram_user_id: number;
-  flow: "register" | "edit" | "admin_add";
-  state: "ASK_NAME" | "CONFIRM_NAME" | "ASK_DATETIME" | "CONFIRM_DATETIME";
+  flow: "register" | "edit" | "admin_add" | "admin_edit_details";
+  state:
+    | "ASK_NAME"
+    | "CONFIRM_NAME"
+    | "ASK_DATETIME"
+    | "CURATOR_ROOM_CHOICE"
+    | "ASK_CURATOR"
+    | "ASK_ROOM"
+    | "CONFIRM_DATETIME"
+    | "CONFIRM_EDIT_DETAILS";
   pending_name: string | null;
+  /** Second generic pending-value slot -- see migrations/0003's comment for
+   * why one slot stopped being enough once the admin flows started
+   * carrying a curator name AND a room through multiple steps. */
+  pending_extra: string | null;
   updated_at: string;
 }
