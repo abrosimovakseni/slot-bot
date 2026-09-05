@@ -32,7 +32,16 @@ const WEBHOOK_PATH = "/webhook";
 // Must match wrangler.toml's `[triggers]` entry exactly -- see that file's
 // comment for the full why. Kept as its own constant (rather than inlined
 // in scheduled() below) so the two are easy to keep in sync.
-const WEBHOOK_REASSERT_CRON = "0 2 * * *";
+//
+// Originally once a day (02:00 UTC) -- tightened to every 15 minutes after
+// the webhook registration was observed dropping (Telegram silently
+// clearing it -- url reset to "" and allowed_updates reset to Telegram's
+// full default list, which isn't what a mere delivery failure looks like)
+// more than once within a single day. Telegram's own docs only say it
+// "give[s] up after a reasonable amount of attempts" without specifying a
+// threshold, so rather than chase the exact trigger, this just shrinks the
+// maximum time the registration can stay wrong from a day to 15 minutes.
+const WEBHOOK_REASSERT_CRON = "*/15 * * * *";
 
 async function notifyAdmin(env: Env, message: string): Promise<void> {
   if (!env.ADMIN_ID) return;

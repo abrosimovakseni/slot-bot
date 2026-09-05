@@ -80,23 +80,27 @@ new_sqlite_classes = ["ConsultationOpener"]
 #                 is a handful of small, cheap D1 reads (a no-op unless
 #                 something's actually due), well within the free tier at
 #                 1,440 invocations/day.
-#   "0 2 * * *"   webhook self-heal, once a day at 02:00 UTC (05:00 MSK,
-#                 quiet hours) -- re-asserts the Telegram webhook
-#                 registration (index.ts's reassertWebhook()) using the
-#                 CURRENT WEBHOOK_SECRET, whether or not anything looks
-#                 wrong. This is a completely separate concern from the
-#                 trigger above: it never touches D1, the notify queue, or
-#                 any student-facing flow, only Telegram's own webhook
-#                 config -- so it can never delay or interfere with a
-#                 student signing up or getting notified. It exists because
-#                 Telegram only reveals a wrong webhook secret once a real
-#                 message actually fails to deliver -- forcing a fresh,
-#                 correct registration
-#                 every day, regardless of whether a failure has been
-#                 observed, closes that gap instead of waiting for one.
+#   "*/15 * * * *" webhook self-heal, every 15 minutes -- re-asserts the
+#                 Telegram webhook registration (index.ts's
+#                 reassertWebhook()) using the CURRENT WEBHOOK_SECRET,
+#                 whether or not anything looks wrong. This is a completely
+#                 separate concern from the trigger above: it never touches
+#                 D1, the notify queue, or any student-facing flow, only
+#                 Telegram's own webhook config -- so it can never delay or
+#                 interfere with a student signing up or getting notified.
+#                 Originally once a day (quiet hours, 02:00 UTC): tightened
+#                 to every 15 minutes after the registration was observed
+#                 dropping more than once in a single day -- Telegram
+#                 resets both url AND allowed_updates to its own defaults
+#                 when this happens, which is not what a simple wrong-secret
+#                 403 looks like, and Telegram's docs don't specify the
+#                 exact failure threshold that triggers it. Rather than
+#                 chase that undocumented threshold, this just bounds how
+#                 long the registration can stay broken to 15 minutes
+#                 instead of a day.
 # ---------------------------------------------------------------------------
 [triggers]
-crons = ["0 2 * * *", "* * * * *"]
+crons = ["*/15 * * * *", "* * * * *"]
 
 [observability]
 enabled = true

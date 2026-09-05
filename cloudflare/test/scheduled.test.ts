@@ -96,7 +96,7 @@ describe("scheduled(): Cron Triggers", () => {
   });
 });
 
-describe("scheduled(): daily webhook self-heal (cron '0 2 * * *')", () => {
+describe("scheduled(): webhook self-heal (cron '*/15 * * * *')", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -107,7 +107,7 @@ describe("scheduled(): daily webhook self-heal (cron '0 2 * * *')", () => {
     const before = await countConsultations();
     // Deliberately a moment when the Wednesday slot would otherwise be due,
     // to prove this branch does NOT run reconcile() at all.
-    await runScheduled(new Date("2027-05-05T06:30:00.000Z"), env, "0 2 * * *"); // also a Wednesday 09:30 MSK
+    await runScheduled(new Date("2027-05-05T06:30:00.000Z"), env, "*/15 * * * *"); // also a Wednesday 09:30 MSK
     expect(await countConsultations()).toBe(before); // untouched -- reconcile() never ran
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -121,7 +121,7 @@ describe("scheduled(): daily webhook self-heal (cron '0 2 * * *')", () => {
   it("a failed re-assert is caught and reported to the admin, never thrown", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("nope", { status: 500 }));
     await expect(
-      runScheduled(new Date("2027-05-07T02:00:00.000Z"), env, "0 2 * * *"),
+      runScheduled(new Date("2027-05-07T02:00:00.000Z"), env, "*/15 * * * *"),
     ).resolves.toBeUndefined();
   });
 });
