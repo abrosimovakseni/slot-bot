@@ -1,5 +1,5 @@
 import { createExecutionContext, createScheduledController, env, waitOnExecutionContext } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import worker from "../src/index";
 import type { Env } from "../src/types";
 
@@ -8,8 +8,8 @@ async function countConsultations(): Promise<number> {
   return row!.c;
 }
 
-async function runScheduled(scheduledTime: Date, targetEnv: Env = env): Promise<void> {
-  const controller = createScheduledController({ scheduledTime });
+async function runScheduled(scheduledTime: Date, targetEnv: Env = env, cron?: string): Promise<void> {
+  const controller = createScheduledController({ scheduledTime, cron });
   const ctx = createExecutionContext();
   await worker.scheduled(controller, targetEnv, ctx);
   await waitOnExecutionContext(ctx);
@@ -93,5 +93,35 @@ describe("scheduled(): Cron Triggers", () => {
     const brokenEnv: Env = { ...env, DB: throwingDb };
 
     await expect(runScheduled(new Date("2027-04-07T06:30:00.000Z"), brokenEnv)).resolves.toBeUndefined();
+  });
+});
+
+describe("scheduled(): daily webhook self-heal (cron '0 2 * * *')", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("re-asserts the Telegram webhook with the current URL and secret -- never touches D1 or students", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ ok: true, result: true }), { status: 200 }));
+
+    const before = await countConsultations();
+    // Deliberately a moment when the Wednesday slot would otherwise be due,
+    // to prove this branch does NOT run reconcile() at all.
+    await runScheduled(new Date("2027-05-05T06:30:00.000Z"), env, "0 2 * * *"); // also a Wednesday 09:30 MSK
+    expect(await countConsultations()).toBe(before); // untouched -- reconcile() never ran
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [calledUrl, calledInit] = fetchSpy.mock.calls[0]!;
+    expect(String(calledUrl)).toBe(`https://api.telegram.org/bot${env.BOT_TOKEN}/setWebhook`);
+    const body = JSON.parse((calledInit as RequestInit).body as string);
+    expect(body.url).toBe(`${env.WORKER_URL}/webhook`);
+    expect(body.secret_token).toBe(env.WEBHOOK_SECRET);
+  });
+
+  it("a failed re-assert is caught and reported to the admin, never thrown", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("nope", { status: 500 }));
+    await expect(
+      runScheduled(new Date("2027-05-07T02:00:00.000Z"), env, "0 2 * * *"),
+    ).resolves.toBeUndefined();
   });
 });

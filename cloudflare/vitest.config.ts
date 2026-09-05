@@ -15,9 +15,14 @@ export default defineConfig({
             TEST_MIGRATIONS: migrations,
             // Test-only values -- never the real secrets. BOT_TOKEN is
             // deliberately fake: TelegramClient's calls to api.telegram.org
-            // fail fast in the test runtime and are swallowed by its own
-            // try/catch (see telegram.ts), so tests never depend on network
-            // access or a real bot.
+            // are expected to fail (404, invalid token) and are swallowed
+            // by its own try/catch (see telegram.ts), so tests never depend
+            // on a real bot -- but they're still REAL network round-trips,
+            // and a test exercising several of them back-to-back (e.g. a
+            // multi-step admin flow) can occasionally outrun vitest's
+            // default 5s timeout on a slow connection, with no bearing on
+            // whether the test's own assertions are right. See this file's
+            // `testTimeout` below.
             BOT_TOKEN: "test-bot-token",
             WEBHOOK_SECRET: "test-webhook-secret",
             // A fixed telegram_user_id, deliberately outside the range
@@ -31,5 +36,9 @@ export default defineConfig({
   ],
   test: {
     setupFiles: ["./test/apply-migrations.ts"],
+    // Generous headroom over the 5s default -- see the BOT_TOKEN comment
+    // above. Tests still fail on a genuine hang, just not on an ordinary
+    // slow-network day.
+    testTimeout: 20_000,
   },
 });

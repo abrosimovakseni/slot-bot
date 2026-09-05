@@ -7,6 +7,9 @@
  *   scheduled() Cron Triggers -- runs the same idempotent reconcile() the
  *               Railway version's post_init/run_repeating job used, so
  *               restart/redeploy/missed-tick recovery works identically.
+ *               One specific trigger (WEBHOOK_REASSERT_CRON, see
+ *               wrangler.toml) does something different -- see
+ *               reassertWebhook() below -- everything else runs reconcile().
  *   queue()     Consumes NOTIFY_QUEUE messages -- the mass-notification
  *               fan-out (see notify.ts for why this is a queue and not a
  *               plain loop).
@@ -26,6 +29,11 @@ export { ConsultationOpener } from "./consultationOpener";
 
 const WEBHOOK_PATH = "/webhook";
 
+// Must match wrangler.toml's `[triggers]` entry exactly -- see that file's
+// comment for the full why. Kept as its own constant (rather than inlined
+// in scheduled() below) so the two are easy to keep in sync.
+const WEBHOOK_REASSERT_CRON = "0 2 * * *";
+
 async function notifyAdmin(env: Env, message: string): Promise<void> {
   if (!env.ADMIN_ID) return;
   try {
@@ -33,6 +41,27 @@ async function notifyAdmin(env: Env, message: string): Promise<void> {
     await telegram.sendMessage(Number(env.ADMIN_ID), `⚠️ SLOT bot error:\n${message.slice(0, 3500)}`);
   } catch {
     // best-effort only -- never let admin notification itself throw
+  }
+}
+
+/**
+ * Re-registers the Telegram webhook with the CURRENT url + WEBHOOK_SECRET,
+ * whether or not anything looks wrong -- see wrangler.toml's
+ * WEBHOOK_REASSERT_CRON comment for the full why (in short: this is the
+ * only way to guarantee Telegram's stored secret always matches ours,
+ * since Telegram never exposes what it currently has on file to compare
+ * against, only whether the *last actual delivery* succeeded).
+ *
+ * Deliberately entirely separate from reconcile() -- doesn't touch D1, the
+ * notify queue, or any student-facing flow, only Telegram's own webhook
+ * config, so it can never delay or interfere with anyone signing up or
+ * being notified.
+ */
+async function reassertWebhook(env: Env): Promise<void> {
+  const telegram = new TelegramClient(env.BOT_TOKEN);
+  const result = await telegram.setWebhook(`${env.WORKER_URL}${WEBHOOK_PATH}`, env.WEBHOOK_SECRET);
+  if (!result.ok) {
+    await notifyAdmin(env, "daily webhook re-assert failed -- setWebhook did not return ok");
   }
 }
 
@@ -81,6 +110,10 @@ export default {
   },
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    if (controller.cron === WEBHOOK_REASSERT_CRON) {
+      await reassertWebhook(env);
+      return;
+    }
     const now = new Date(controller.scheduledTime);
     try {
       const report = await reconcile(env, now);

@@ -53,6 +53,9 @@ export interface Env {
   CONSULTATION_OPENER: DurableObjectNamespace<ConsultationOpener>;
   BOT_TOKEN: string;
   WEBHOOK_SECRET: string;
+  /** This Worker's own public URL (no trailing slash) -- see wrangler.toml's
+   * `[vars]` and index.ts's reassertWebhook(). */
+  WORKER_URL: string;
   ADMIN_ID?: string;
   /** Test-only: the parsed migrations array, injected via vitest.config.ts
    * so test/apply-migrations.ts can apply them to the in-memory D1 before

@@ -4,6 +4,14 @@ compatibility_date = "2026-08-01"
 compatibility_flags = ["nodejs_compat"]
 
 # ---------------------------------------------------------------------------
+# Plain (non-secret) config -- WORKER_URL is this Worker's own public URL,
+# used only to re-assert the Telegram webhook registration once a day (see
+# the "0 2 * * *" cron trigger below and index.ts's reassertWebhook()).
+# ---------------------------------------------------------------------------
+[vars]
+WORKER_URL = "https://slot-hse-bot.slot-hse-abrosimova.workers.dev"
+
+# ---------------------------------------------------------------------------
 # D1 database
 # ---------------------------------------------------------------------------
 # `database_id` is filled in after `wrangler d1 create slot_bot_db` -- see
@@ -70,9 +78,23 @@ new_sqlite_classes = ["ConsultationOpener"]
 #                 handful of small, cheap D1 reads (a no-op unless
 #                 something's actually due), well within the free tier at
 #                 1,440 invocations/day.
+#   "0 2 * * *"   webhook self-heal, once a day at 02:00 UTC (05:00 MSK,
+#                 quiet hours) -- re-asserts the Telegram webhook
+#                 registration (index.ts's reassertWebhook()) using the
+#                 CURRENT WEBHOOK_SECRET, whether or not anything looks
+#                 wrong. This is a completely separate concern from the
+#                 triggers above: it never touches D1, the notify queue, or
+#                 any student-facing flow, only Telegram's own webhook
+#                 config -- so it can never delay or interfere with a
+#                 student signing up or getting notified. It exists because
+#                 Telegram only reveals a wrong webhook secret once a real
+#                 message actually fails to deliver -- forcing a fresh,
+#                 correct registration
+#                 every day, regardless of whether a failure has been
+#                 observed, closes that gap instead of waiting for one.
 # ---------------------------------------------------------------------------
 [triggers]
-crons = ["30 6 * * 3", "30 6 * * 5", "30 6 * * 6", "* * * * *"]
+crons = ["30 6 * * 3", "30 6 * * 5", "30 6 * * 6", "0 2 * * *", "* * * * *"]
 
 [observability]
 enabled = true
