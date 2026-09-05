@@ -1,13 +1,14 @@
 /**
  * Admin-only flows: create or cancel a one-off consultation (for a
- * date/time outside the regular weekly schedule (config.ts's
- * WEEKLY_SCHEDULE) -- an extra session, a
- * makeup slot, and so on), and change the curator/room of an already
- * existing consultation. Visible only to `env.ADMIN_ID` (the curator's own
- * telegram_user_id, set as a Cloudflare secret) -- every entry point here
- * re-checks `isAdmin()` itself, never trusting the caller, since the menu
- * button that leads here is also just a label anyone could in principle
- * type.
+ * date/time outside the regular weekly schedule -- an extra session, a
+ * makeup slot, and so on), change the curator/room of an already existing
+ * consultation, and manage the recurring weekly schedule itself (db/schedule.ts
+ * -- add/remove entries like "каждую среду в 10:30", see the "📅
+ * Еженедельный график" section near the bottom of this file). Visible only
+ * to `env.ADMIN_ID` (the curator's own telegram_user_id, set as a
+ * Cloudflare secret) -- every entry point here re-checks `isAdmin()`
+ * itself, never trusting the caller, since the menu button that leads here
+ * is also just a label anyone could in principle type.
  *
  * Creating a one-off consultation opens registration one hour before its
  * class time, exactly like the regular weekly schedule -- the row is
@@ -32,7 +33,7 @@
  * fields on any already-existing upcoming consultation, notifying anyone
  * already signed up.
  */
-import { ADMIN_CONSULTATION_LEAD_MS, DEFAULT_CURATOR, DEFAULT_ROOM } from "../../config";
+import { ADMIN_CONSULTATION_LEAD_MS, DEFAULT_CURATOR, DEFAULT_ROOM, WEEKDAY_NAMES } from "../../config";
 import { cancelOpenAlarm, scheduleOpenAlarm } from "../../consultationOpener";
 import {
   activeSignupUserIds,
@@ -43,6 +44,7 @@ import {
   openDueConsultations,
   updateConsultationDetails,
 } from "../../db/consultations";
+import { addScheduleEntry, deleteScheduleEntry, getScheduleEntry, listAllScheduleEntries } from "../../db/schedule";
 import { clearState, getState, setState } from "../../db/state";
 import {
   enqueueConsultationCancelled,
@@ -53,15 +55,21 @@ import {
 import {
   adminMenuKeyboard,
   cancelAddConsultationKeyboard,
+  cancelAddScheduleKeyboard,
   cancelConsultationListKeyboard,
+  confirmAddScheduleKeyboard,
   confirmCancelConsultationKeyboard,
   confirmCreateConsultationKeyboard,
+  confirmDeleteScheduleKeyboard,
   confirmEditDetailsKeyboard,
   curatorRoomChoiceKeyboard,
   editDetailsListKeyboard,
+  scheduleCuratorRoomChoiceKeyboard,
+  scheduleListKeyboard,
   TelegramClient,
+  weekdayPickerKeyboard,
 } from "../../telegram";
-import { formatMoscowDateTime, parseMoscowDateTime } from "../../timeUtils";
+import { formatMoscowDateTime, formatTimeOfDay, openTimeOneHourBefore, parseMoscowDateTime, parseTimeOfDay } from "../../timeUtils";
 import type { Env } from "../../types";
 import * as texts from "../texts";
 
@@ -514,4 +522,316 @@ export async function confirmEditDetailsNo(
 ): Promise<void> {
   await clearState(env, telegramUserId);
   await telegram.editMessageText(chatId, messageId, texts.ADMIN_CANCEL_ABORTED);
+}
+
+// ---------------------------------------------------------------------------
+// Weekly recurring schedule ("📅 Еженедельный график") -- add/remove regular
+// weekly consultation slots (e.g. "каждую среду в 10:30") entirely through
+// the bot, so a new owner of a duplicated deployment (see db/schedule.ts's
+// doc comment) never needs a code change or a developer's help to set up
+// their own group's schedule.
+//
+// Carries its state (weekday, class time, opens time, and optionally a
+// custom curator/room) through user_state.pending_extra as one evolving
+// JSON object across the flow's steps -- pending_name is unused here.
+// ---------------------------------------------------------------------------
+interface PendingSchedule {
+  weekday: number;
+  classHour?: number;
+  classMinute?: number;
+  opensHour?: number;
+  opensMinute?: number;
+  curator?: string;
+  room?: string;
+}
+
+function weekdayName(weekday: number): string {
+  return WEEKDAY_NAMES[weekday] ?? String(weekday);
+}
+
+export async function showScheduleMenu(env: Env, telegram: TelegramClient, chatId: number): Promise<void> {
+  const all = await listAllScheduleEntries(env);
+  if (all.length === 0) {
+    await telegram.sendMessage(chatId, texts.SCHEDULE_LIST_EMPTY, { replyMarkup: scheduleListKeyboard([]) });
+    return;
+  }
+  const lines = all.map((e) =>
+    texts.scheduleEntryLine(
+      weekdayName(e.weekday),
+      formatTimeOfDay({ hour: e.class_hour, minute: e.class_minute }),
+      e.curator,
+      e.room,
+    ),
+  );
+  const items = all.map((e) => ({
+    id: e.id,
+    label: `${weekdayName(e.weekday)} ${formatTimeOfDay({ hour: e.class_hour, minute: e.class_minute })}`,
+  }));
+  await telegram.sendMessage(chatId, `${texts.scheduleListHeader()}\n${lines.join("\n")}`, {
+    replyMarkup: scheduleListKeyboard(items),
+  });
+}
+
+export async function startAddSchedule(
+  env: Env,
+  telegram: TelegramClient,
+  chatId: number,
+  telegramUserId: number,
+): Promise<void> {
+  await setState(env, telegramUserId, "admin_schedule", "ASK_WEEKDAY", null);
+  await telegram.sendMessage(chatId, texts.ASK_SCHEDULE_WEEKDAY, { replyMarkup: weekdayPickerKeyboard() });
+}
+
+export async function pickScheduleWeekday(
+  env: Env,
+  telegram: TelegramClient,
+  chatId: number,
+  telegramUserId: number,
+  messageId: number,
+  weekday: number,
+): Promise<void> {
+  const state = await getState(env, telegramUserId);
+  if (state === null || state.flow !== "admin_schedule" || state.state !== "ASK_WEEKDAY") {
+    await telegram.editMessageText(chatId, messageId, texts.SCHEDULE_ACTION_EXPIRED);
+    return;
+  }
+  const pending: PendingSchedule = { weekday };
+  await setState(env, telegramUserId, "admin_schedule", "ASK_CLASS_TIME", null, JSON.stringify(pending));
+  await telegram.editMessageText(chatId, messageId, texts.ASK_SCHEDULE_CLASS_TIME);
+}
+
+export async function receiveScheduleClassTime(
+  env: Env,
+  telegram: TelegramClient,
+  chatId: number,
+  telegramUserId: number,
+  rawText: string,
+): Promise<void> {
+  const state = await getState(env, telegramUserId);
+  if (state === null || state.flow !== "admin_schedule" || state.state !== "ASK_CLASS_TIME" || state.pending_extra === null) {
+    await telegram.sendMessage(chatId, texts.SCHEDULE_ACTION_EXPIRED);
+    return;
+  }
+  const parsed = parseTimeOfDay(rawText);
+  if (parsed === null) {
+    await telegram.sendMessage(chatId, texts.INVALID_TIME_OF_DAY, { replyMarkup: cancelAddScheduleKeyboard() });
+    return;
+  }
+  const opens = openTimeOneHourBefore(parsed);
+  const pending: PendingSchedule = {
+    ...(JSON.parse(state.pending_extra) as PendingSchedule),
+    classHour: parsed.hour,
+    classMinute: parsed.minute,
+    opensHour: opens.hour,
+    opensMinute: opens.minute,
+  };
+  await setState(env, telegramUserId, "admin_schedule", "CURATOR_ROOM_CHOICE", null, JSON.stringify(pending));
+  await telegram.sendMessage(chatId, texts.scheduleCuratorRoomChoicePrompt(DEFAULT_CURATOR, DEFAULT_ROOM), {
+    replyMarkup: scheduleCuratorRoomChoiceKeyboard(),
+  });
+}
+
+async function showScheduleConfirm(
+  env: Env,
+  telegram: TelegramClient,
+  chatId: number,
+  messageId: number,
+  pending: PendingSchedule,
+): Promise<void> {
+  const classTimeStr = formatTimeOfDay({ hour: pending.classHour!, minute: pending.classMinute! });
+  const opensTimeStr = formatTimeOfDay({ hour: pending.opensHour!, minute: pending.opensMinute! });
+  const curator = pending.curator ?? DEFAULT_CURATOR;
+  const room = pending.room ?? DEFAULT_ROOM;
+  await telegram.editMessageText(
+    chatId,
+    messageId,
+    texts.confirmAddSchedule(weekdayName(pending.weekday), classTimeStr, opensTimeStr, curator, room),
+    { replyMarkup: confirmAddScheduleKeyboard() },
+  );
+}
+
+/** "Как обычно" -- accepts the default curator/room without typing anything. */
+export async function chooseScheduleDefaultCuratorRoom(
+  env: Env,
+  telegram: TelegramClient,
+  chatId: number,
+  telegramUserId: number,
+  messageId: number,
+): Promise<void> {
+  const state = await getState(env, telegramUserId);
+  if (
+    state === null ||
+    state.flow !== "admin_schedule" ||
+    state.state !== "CURATOR_ROOM_CHOICE" ||
+    state.pending_extra === null
+  ) {
+    await telegram.editMessageText(chatId, messageId, texts.SCHEDULE_ACTION_EXPIRED);
+    return;
+  }
+  const pending = JSON.parse(state.pending_extra) as PendingSchedule;
+  await setState(env, telegramUserId, "admin_schedule", "CONFIRM_SCHEDULE", null, JSON.stringify(pending));
+  await showScheduleConfirm(env, telegram, chatId, messageId, pending);
+}
+
+/** "Указать другое" -- the admin will type a custom curator/room next. */
+export async function chooseScheduleCustomCuratorRoom(
+  env: Env,
+  telegram: TelegramClient,
+  chatId: number,
+  telegramUserId: number,
+  messageId: number,
+): Promise<void> {
+  const state = await getState(env, telegramUserId);
+  if (
+    state === null ||
+    state.flow !== "admin_schedule" ||
+    state.state !== "CURATOR_ROOM_CHOICE" ||
+    state.pending_extra === null
+  ) {
+    await telegram.editMessageText(chatId, messageId, texts.SCHEDULE_ACTION_EXPIRED);
+    return;
+  }
+  await setState(env, telegramUserId, "admin_schedule", "ASK_CURATOR", null, state.pending_extra);
+  await telegram.editMessageText(chatId, messageId, texts.ASK_CURATOR_NAME);
+}
+
+export async function receiveScheduleCuratorName(
+  env: Env,
+  telegram: TelegramClient,
+  chatId: number,
+  telegramUserId: number,
+  rawText: string,
+): Promise<void> {
+  const curator = rawText.trim();
+  if (curator === "") {
+    await telegram.sendMessage(chatId, texts.INVALID_CURATOR_NAME);
+    return;
+  }
+  const state = await getState(env, telegramUserId);
+  if (state === null || state.pending_extra === null) {
+    await telegram.sendMessage(chatId, texts.SCHEDULE_ACTION_EXPIRED);
+    return;
+  }
+  const pending: PendingSchedule = { ...(JSON.parse(state.pending_extra) as PendingSchedule), curator };
+  await setState(env, telegramUserId, "admin_schedule", "ASK_ROOM", null, JSON.stringify(pending));
+  await telegram.sendMessage(chatId, texts.ASK_ROOM);
+}
+
+export async function receiveScheduleRoom(
+  env: Env,
+  telegram: TelegramClient,
+  chatId: number,
+  telegramUserId: number,
+  rawText: string,
+): Promise<void> {
+  const room = rawText.trim();
+  if (room === "") {
+    await telegram.sendMessage(chatId, texts.INVALID_ROOM);
+    return;
+  }
+  const state = await getState(env, telegramUserId);
+  if (state === null || state.pending_extra === null) {
+    await telegram.sendMessage(chatId, texts.SCHEDULE_ACTION_EXPIRED);
+    return;
+  }
+  const pending: PendingSchedule = { ...(JSON.parse(state.pending_extra) as PendingSchedule), room };
+  await setState(env, telegramUserId, "admin_schedule", "CONFIRM_SCHEDULE", null, JSON.stringify(pending));
+  const classTimeStr = formatTimeOfDay({ hour: pending.classHour!, minute: pending.classMinute! });
+  const opensTimeStr = formatTimeOfDay({ hour: pending.opensHour!, minute: pending.opensMinute! });
+  await telegram.sendMessage(
+    chatId,
+    texts.confirmAddSchedule(weekdayName(pending.weekday), classTimeStr, opensTimeStr, pending.curator!, pending.room!),
+    { replyMarkup: confirmAddScheduleKeyboard() },
+  );
+}
+
+export async function confirmAddScheduleYes(
+  env: Env,
+  telegram: TelegramClient,
+  chatId: number,
+  telegramUserId: number,
+  messageId: number,
+): Promise<void> {
+  const state = await getState(env, telegramUserId);
+  if (state === null || state.flow !== "admin_schedule" || state.pending_extra === null) {
+    await telegram.editMessageText(chatId, messageId, texts.SCHEDULE_ACTION_EXPIRED);
+    return;
+  }
+  const pending = JSON.parse(state.pending_extra) as PendingSchedule;
+  await clearState(env, telegramUserId);
+
+  await addScheduleEntry(env, {
+    name: weekdayName(pending.weekday),
+    weekday: pending.weekday,
+    classHour: pending.classHour!,
+    classMinute: pending.classMinute!,
+    opensHour: pending.opensHour!,
+    opensMinute: pending.opensMinute!,
+    curator: pending.curator,
+    room: pending.room,
+  });
+
+  const classTimeStr = formatTimeOfDay({ hour: pending.classHour!, minute: pending.classMinute! });
+  await telegram.editMessageText(chatId, messageId, texts.scheduleAdded(weekdayName(pending.weekday), classTimeStr));
+}
+
+/** Cancel button attached throughout the add flow, and the "Отмена" option
+ * on the final confirm step -- both just clear whatever's pending. */
+export async function abortAddSchedule(
+  env: Env,
+  telegram: TelegramClient,
+  chatId: number,
+  telegramUserId: number,
+  messageId: number,
+): Promise<void> {
+  await clearState(env, telegramUserId);
+  await telegram.editMessageText(chatId, messageId, texts.SCHEDULE_CANCELLED);
+}
+
+export async function pickScheduleDelete(
+  env: Env,
+  telegram: TelegramClient,
+  chatId: number,
+  messageId: number,
+  id: number,
+): Promise<void> {
+  const entry = await getScheduleEntry(env, id);
+  if (entry === null) {
+    await telegram.editMessageText(chatId, messageId, texts.SCHEDULE_ACTION_EXPIRED);
+    return;
+  }
+  const timeStr = formatTimeOfDay({ hour: entry.class_hour, minute: entry.class_minute });
+  await telegram.editMessageText(chatId, messageId, texts.confirmDeleteSchedule(weekdayName(entry.weekday), timeStr), {
+    replyMarkup: confirmDeleteScheduleKeyboard(id),
+  });
+}
+
+export async function confirmDeleteScheduleYes(
+  env: Env,
+  telegram: TelegramClient,
+  chatId: number,
+  messageId: number,
+  id: number,
+): Promise<void> {
+  const entry = await getScheduleEntry(env, id);
+  if (entry === null) {
+    await telegram.editMessageText(chatId, messageId, texts.SCHEDULE_ACTION_EXPIRED);
+    return;
+  }
+  const timeStr = formatTimeOfDay({ hour: entry.class_hour, minute: entry.class_minute });
+  const deleted = await deleteScheduleEntry(env, id);
+  if (!deleted) {
+    await telegram.editMessageText(chatId, messageId, texts.SCHEDULE_ACTION_EXPIRED);
+    return;
+  }
+  await telegram.editMessageText(chatId, messageId, texts.scheduleDeleted(weekdayName(entry.weekday), timeStr));
+}
+
+export async function abortDeleteSchedule(
+  env: Env,
+  telegram: TelegramClient,
+  chatId: number,
+  messageId: number,
+): Promise<void> {
+  await telegram.editMessageText(chatId, messageId, texts.SCHEDULE_CANCELLED);
 }

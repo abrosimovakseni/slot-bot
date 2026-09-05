@@ -10,25 +10,38 @@ import { TelegramClient, type TelegramCallbackQuery, type TelegramMessage, type 
 import type { Env } from "../types";
 import {
   abortAddConsultation,
+  abortAddSchedule,
   abortCancelConsultation,
+  abortDeleteSchedule,
   chooseCustomCuratorRoom,
   chooseDefaultCuratorRoom,
+  chooseScheduleCustomCuratorRoom,
+  chooseScheduleDefaultCuratorRoom,
+  confirmAddScheduleYes,
   confirmCancelPick,
   confirmCreateConsultationNo,
   confirmCreateConsultationYes,
+  confirmDeleteScheduleYes,
   confirmEditDetailsNo,
   confirmEditDetailsYes,
   executeCancelConsultation,
   isAdmin,
   pickForEdit,
+  pickScheduleDelete,
+  pickScheduleWeekday,
   receiveConsultationDateTime,
   receiveCuratorName,
   receiveEditCurator,
   receiveEditRoom,
   receiveRoom,
+  receiveScheduleClassTime,
+  receiveScheduleCuratorName,
+  receiveScheduleRoom,
   showAdminMenu,
   showCancelList,
+  showScheduleMenu,
   startAddConsultation,
+  startAddSchedule,
   startEditDetails,
 } from "./handlers/admin";
 import { confirmEdit, confirmYes, receiveName } from "./handlers/nameFlow";
@@ -89,6 +102,18 @@ async function routeMessage(env: Env, telegram: TelegramClient, message: Telegra
       }
       if (state.flow === "admin_edit_details" && state.state === "ASK_ROOM") {
         await receiveEditRoom(env, telegram, chatId, telegramUserId, rawText);
+        return;
+      }
+      if (state.flow === "admin_schedule" && state.state === "ASK_CLASS_TIME") {
+        await receiveScheduleClassTime(env, telegram, chatId, telegramUserId, rawText);
+        return;
+      }
+      if (state.flow === "admin_schedule" && state.state === "ASK_CURATOR") {
+        await receiveScheduleCuratorName(env, telegram, chatId, telegramUserId, rawText);
+        return;
+      }
+      if (state.flow === "admin_schedule" && state.state === "ASK_ROOM") {
+        await receiveScheduleRoom(env, telegram, chatId, telegramUserId, rawText);
         return;
       }
     }
@@ -220,6 +245,55 @@ async function routeCallback(env: Env, telegram: TelegramClient, cq: TelegramCal
   }
   if (data.startsWith("admin_edit_no")) {
     await confirmEditDetailsNo(env, telegram, chatId, telegramUserId, messageId);
+    return;
+  }
+  if (data === "admin_schedule_menu") {
+    await showScheduleMenu(env, telegram, chatId);
+    return;
+  }
+  if (data === "admin_schedule_add_start") {
+    await startAddSchedule(env, telegram, chatId, telegramUserId);
+    return;
+  }
+  if (data.startsWith("admin_schedule_weekday:")) {
+    const weekday = Number(data.slice("admin_schedule_weekday:".length));
+    if (Number.isFinite(weekday)) {
+      await pickScheduleWeekday(env, telegram, chatId, telegramUserId, messageId, weekday);
+    }
+    return;
+  }
+  if (data === "admin_schedule_curator_default") {
+    await chooseScheduleDefaultCuratorRoom(env, telegram, chatId, telegramUserId, messageId);
+    return;
+  }
+  if (data === "admin_schedule_curator_custom") {
+    await chooseScheduleCustomCuratorRoom(env, telegram, chatId, telegramUserId, messageId);
+    return;
+  }
+  if (data === "admin_schedule_confirm_yes") {
+    await confirmAddScheduleYes(env, telegram, chatId, telegramUserId, messageId);
+    return;
+  }
+  if (data === "admin_schedule_confirm_no" || data === "admin_schedule_cancel") {
+    await abortAddSchedule(env, telegram, chatId, telegramUserId, messageId);
+    return;
+  }
+  if (data.startsWith("admin_schedule_delete_pick:")) {
+    const id = Number(data.slice("admin_schedule_delete_pick:".length));
+    if (Number.isFinite(id)) {
+      await pickScheduleDelete(env, telegram, chatId, messageId, id);
+    }
+    return;
+  }
+  if (data.startsWith("admin_schedule_delete_yes:")) {
+    const id = Number(data.slice("admin_schedule_delete_yes:".length));
+    if (Number.isFinite(id)) {
+      await confirmDeleteScheduleYes(env, telegram, chatId, messageId, id);
+    }
+    return;
+  }
+  if (data === "admin_schedule_delete_no") {
+    await abortDeleteSchedule(env, telegram, chatId, messageId);
     return;
   }
 }

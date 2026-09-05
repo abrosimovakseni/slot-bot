@@ -34,6 +34,7 @@
 import { enqueueOpeningBroadcast, enqueueQueueRefresh } from "../notify";
 import { toggleStatus } from "../queueLogic";
 import { allWeekOccurrences, moscowDateKey } from "../timeUtils";
+import { listActiveScheduleEntries } from "./schedule";
 import type { ConsultationRow, Env, PriorityStatus } from "../types";
 
 // ---------------------------------------------------------------------------
@@ -355,7 +356,8 @@ export async function reconcile(env: Env, now: Date = new Date()): Promise<Recon
   //     brand-new row -- an already-existing row (created earlier that
   //     same day, then the Worker restarted or a cron tick was missed)
   //     still gets recognized and, if needed, finished opening.
-  for (const { entry, scheduledAt, opensAt } of allWeekOccurrences(now)) {
+  const scheduleEntries = await listActiveScheduleEntries(env);
+  for (const { entry, scheduledAt, opensAt } of allWeekOccurrences(now, scheduleEntries)) {
     if (now < opensAt) continue;
     if (moscowDateKey(now) > moscowDateKey(scheduledAt)) continue;
 

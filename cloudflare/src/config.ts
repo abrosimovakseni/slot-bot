@@ -3,9 +3,13 @@
  * webhook secret come from Cloudflare secrets (`wrangler secret put`), never
  * from source, never from wrangler.toml `[vars]`.
  *
- * The weekly schedule lives here in one place, same as the Railway
- * version's config.py -- change it here if the curator's schedule ever
- * changes, nothing else needs to change.
+ * The recurring weekly schedule itself does NOT live here any more -- it's
+ * in D1 (see db/schedule.ts and migrations/0004_weekly_schedule.sql), so
+ * the bot's own admin can add/edit/remove weekly slots through Telegram
+ * (bot/handlers/admin.ts's "📅 Еженедельный график" flow) without a code
+ * change or redeploy. WEEKLY_SCHEDULE_SEED below is only the *starting*
+ * data the migration inserts for a brand-new deployment -- change a
+ * schedule via the bot, not by editing this file.
  */
 
 export interface ScheduleEntry {
@@ -22,6 +26,11 @@ export interface ScheduleEntry {
   room?: string;
 }
 
+/** Reference/seed data only -- see migrations/0004_weekly_schedule.sql,
+ * which inserts these same three rows for a brand-new deployment. Also
+ * reused by tests as known fixture data. The live schedule read by
+ * reconcile() (db/consultations.ts) always comes from D1 (db/schedule.ts),
+ * never from this constant. */
 export const WEEKLY_SCHEDULE: ScheduleEntry[] = [
   { name: "Среда", weekday: 2, classHour: 10, classMinute: 30, opensHour: 9, opensMinute: 30 },
   { name: "Пятница", weekday: 4, classHour: 10, classMinute: 30, opensHour: 9, opensMinute: 30 },
@@ -36,6 +45,10 @@ export const WEEKLY_SCHEDULE: ScheduleEntry[] = [
     room: "324",
   },
 ];
+
+/** Monday=0 .. Sunday=6 -- used by the admin "📅 Еженедельный график" flow's
+ * weekday picker and by list/confirmation messages. */
+export const WEEKDAY_NAMES = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"];
 
 /** Size of the priority-reserved block at the top of the queue (positions 1..N). */
 export const PRIORITY_SLOTS = 5;

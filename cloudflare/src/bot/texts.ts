@@ -145,3 +145,65 @@ export function detailsChanged(label: string, curator: string, room: string): st
     `ℹ️ Для консультации ${label} изменились данные.\n` + `Куратор: ${curator}\nКабинет: ${room}`
   );
 }
+
+// ---------------------------------------------------------------------------
+// Admin: weekly recurring schedule (visible only to env.ADMIN_ID) -- lets
+// the admin add/remove regular weekly consultation slots (e.g. "каждую
+// среду в 10:30") entirely through the bot, no code change needed. See
+// bot/handlers/admin.ts and db/schedule.ts.
+// ---------------------------------------------------------------------------
+export const BTN_SCHEDULE_MENU = "📅 Еженедельный график";
+
+export function scheduleListHeader(): string {
+  return "Еженедельные консультации:";
+}
+
+export const SCHEDULE_LIST_EMPTY =
+  "Пока нет ни одной еженедельной консультации.\nНажми «➕ Добавить», чтобы создать первую.";
+
+export function scheduleEntryLine(weekdayName: string, timeStr: string, curator: string | null, room: string | null): string {
+  const who = curator !== null && room !== null ? `${curator}, каб. ${room}` : "куратор и кабинет по умолчанию";
+  return `${weekdayName} в ${timeStr} — ${who}`;
+}
+
+export const ASK_SCHEDULE_WEEKDAY = "В какой день недели проходит эта консультация?";
+
+export const ASK_SCHEDULE_CLASS_TIME =
+  "Во сколько начинается пара, по московскому времени? Формат ЧЧ:ММ, например 10:30.";
+
+export const INVALID_TIME_OF_DAY = "Не получилось распознать время. Формат ЧЧ:ММ, например 10:30.";
+
+export function scheduleCuratorRoomChoicePrompt(defaultCurator: string, defaultRoom: string): string {
+  return `Куратор и кабинет — как обычно (${defaultCurator}, кабинет ${defaultRoom}), или указать другое?`;
+}
+
+export function confirmAddSchedule(
+  weekdayName: string,
+  classTimeStr: string,
+  opensTimeStr: string,
+  curator: string,
+  room: string,
+): string {
+  return (
+    `Добавить еженедельную консультацию?\n` +
+    `День: ${weekdayName}\nВремя пары: ${classTimeStr} (мск)\nЗапись откроется: ${opensTimeStr} (мск)\n` +
+    `Куратор: ${curator}\nКабинет: ${room}`
+  );
+}
+
+export function scheduleAdded(weekdayName: string, classTimeStr: string): string {
+  return `✅ Готово. Каждую(ый) ${weekdayName.toLowerCase()} в ${classTimeStr} будет открываться запись на консультацию.`;
+}
+
+export const CHOOSE_SCHEDULE_TO_DELETE_PROMPT = "Нажми на консультацию ниже, чтобы удалить её из графика:";
+
+export function confirmDeleteSchedule(weekdayName: string, timeStr: string): string {
+  return `Удалить из графика «${weekdayName} в ${timeStr}»? Уже открытые и созданные консультации это не отменяет — только будущие новые.`;
+}
+
+export function scheduleDeleted(weekdayName: string, timeStr: string): string {
+  return `🗑 «${weekdayName} в ${timeStr}» удалено из еженедельного графика.`;
+}
+
+export const SCHEDULE_ACTION_EXPIRED = "Действие устарело, начни заново через «📅 Еженедельный график».";
+export const SCHEDULE_CANCELLED = "Отменено.";

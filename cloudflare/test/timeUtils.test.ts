@@ -3,9 +3,12 @@ import { WEEKLY_SCHEDULE } from "../src/config";
 import {
   allWeekOccurrences,
   formatMoscowDateTime,
+  formatTimeOfDay,
   moscowDateKey,
   moscowWeekday,
+  openTimeOneHourBefore,
   parseMoscowDateTime,
+  parseTimeOfDay,
   weekOccurrence,
 } from "../src/timeUtils";
 
@@ -49,11 +52,15 @@ describe("timeUtils (pure)", () => {
     expect(SAT.room).toBe("324");
   });
 
-  it("allWeekOccurrences returns all three schedule entries for the containing week", () => {
+  it("allWeekOccurrences returns all schedule entries passed to it for the containing week", () => {
     const now = new Date("2026-09-09T09:00:00.000Z");
-    const occurrences = allWeekOccurrences(now);
+    const occurrences = allWeekOccurrences(now, WEEKLY_SCHEDULE);
     expect(occurrences).toHaveLength(3);
     expect(occurrences.map((o) => o.entry.name).sort()).toEqual(["Пятница", "Среда", "Суббота"]);
+  });
+
+  it("allWeekOccurrences returns nothing for an empty entries array", () => {
+    expect(allWeekOccurrences(new Date("2026-09-09T09:00:00.000Z"), [])).toEqual([]);
   });
 
   it("moscowDateKey reflects the Moscow calendar date, not the UTC one, near midnight", () => {
@@ -104,5 +111,35 @@ describe("formatMoscowDateTime / parseMoscowDateTime (admin one-off consultation
   it("rejects an out-of-range hour or minute", () => {
     expect(parseMoscowDateTime("20.09.2026 25:00")).toBeNull();
     expect(parseMoscowDateTime("20.09.2026 12:60")).toBeNull();
+  });
+});
+
+describe("parseTimeOfDay / formatTimeOfDay / openTimeOneHourBefore (admin weekly schedule)", () => {
+  it("parses a well-formed ЧЧ:ММ", () => {
+    expect(parseTimeOfDay("10:30")).toEqual({ hour: 10, minute: 30 });
+    expect(parseTimeOfDay("9:05")).toEqual({ hour: 9, minute: 5 });
+    expect(parseTimeOfDay(" 23:59 ")).toEqual({ hour: 23, minute: 59 });
+  });
+
+  it("rejects text that doesn't match, or an impossible hour/minute", () => {
+    expect(parseTimeOfDay("not a time")).toBeNull();
+    expect(parseTimeOfDay("10.30")).toBeNull();
+    expect(parseTimeOfDay("25:00")).toBeNull();
+    expect(parseTimeOfDay("10:60")).toBeNull();
+  });
+
+  it("formatTimeOfDay round-trips a parsed value back to ЧЧ:ММ, zero-padded", () => {
+    expect(formatTimeOfDay({ hour: 9, minute: 5 })).toBe("09:05");
+    expect(formatTimeOfDay(parseTimeOfDay("10:30")!)).toBe("10:30");
+  });
+
+  it("openTimeOneHourBefore subtracts 60 minutes, same day", () => {
+    expect(openTimeOneHourBefore({ hour: 10, minute: 30 })).toEqual({ hour: 9, minute: 30 });
+    expect(openTimeOneHourBefore({ hour: 1, minute: 0 })).toEqual({ hour: 0, minute: 0 });
+  });
+
+  it("openTimeOneHourBefore clamps at 00:00 rather than rolling into the previous day", () => {
+    expect(openTimeOneHourBefore({ hour: 0, minute: 30 })).toEqual({ hour: 0, minute: 0 });
+    expect(openTimeOneHourBefore({ hour: 0, minute: 0 })).toEqual({ hour: 0, minute: 0 });
   });
 });

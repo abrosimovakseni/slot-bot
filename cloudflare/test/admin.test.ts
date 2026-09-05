@@ -2,6 +2,7 @@ import { createExecutionContext, env, runDurableObjectAlarm, runInDurableObject,
 import { describe, expect, it, vi } from "vitest";
 import { scheduleOpenAlarm } from "../src/consultationOpener";
 import { listUpcomingConsultations } from "../src/db/consultations";
+import { addScheduleEntry } from "../src/db/schedule";
 import { signupUser } from "../src/db/queue";
 import worker from "../src/index";
 import { isAdmin } from "../src/bot/handlers/admin";
@@ -366,5 +367,166 @@ describe("admin: change curator/room for an existing consultation end-to-end", (
     // No throw, no 500 -- `post()` already asserted status 200. There's
     // nothing in D1 to assert on here beyond "it didn't crash", since the
     // NO_UPCOMING_CONSULTATIONS reply isn't observable from this harness.
+  });
+});
+
+describe("admin: weekly recurring schedule ('📅 Еженедельный график') end-to-end", () => {
+  async function scheduleRow(weekday: number, classHour: number) {
+    return env.DB.prepare("SELECT * FROM weekly_schedule WHERE weekday = ? AND class_hour = ?")
+      .bind(weekday, classHour)
+      .first<{ id: number; curator: string | null; room: string | null; opens_hour: number; opens_minute: number; active: number }>();
+  }
+
+  it("add -> pick weekday -> type time -> 'Как обычно' -> confirm creates an active entry with no curator/room override", async () => {
+    await post(webhookCallback(ADMIN_ID, "admin_schedule_add_start"));
+    expect((await getUserState(ADMIN_ID))?.state).toBe("ASK_WEEKDAY");
+
+    await post(webhookCallback(ADMIN_ID, "admin_schedule_weekday:0")); // Monday
+    let state = await getUserState(ADMIN_ID);
+    expect(state?.state).toBe("ASK_CLASS_TIME");
+    expect(state?.pending_extra).toBe(JSON.stringify({ weekday: 0 }));
+
+    await post(webhookMessage(ADMIN_ID, "11:15"));
+    state = await getUserState(ADMIN_ID);
+    expect(state?.state).toBe("CURATOR_ROOM_CHOICE");
+    expect(state?.pending_extra).toBe(
+      JSON.stringify({ weekday: 0, classHour: 11, classMinute: 15, opensHour: 10, opensMinute: 15 }),
+    );
+
+    await post(webhookCallback(ADMIN_ID, "admin_schedule_curator_default"));
+    expect((await getUserState(ADMIN_ID))?.state).toBe("CONFIRM_SCHEDULE");
+
+    await post(webhookCallback(ADMIN_ID, "admin_schedule_confirm_yes"));
+    expect(await getUserState(ADMIN_ID)).toBeNull();
+
+    const row = await scheduleRow(0, 11);
+    expect(row).not.toBeNull();
+    expect(row!.curator).toBeNull();
+    expect(row!.room).toBeNull();
+    expect(row!.opens_hour).toBe(10);
+    expect(row!.opens_minute).toBe(15);
+    expect(row!.active).toBe(1);
+  });
+
+  it("add -> pick weekday -> type time -> 'Указать другое' -> type curator/room -> confirm stores the override", async () => {
+    await post(webhookCallback(ADMIN_ID, "admin_schedule_add_start"));
+    await post(webhookCallback(ADMIN_ID, "admin_schedule_weekday:1")); // Tuesday
+    await post(webhookMessage(ADMIN_ID, "18:00"));
+    expect((await getUserState(ADMIN_ID))?.state).toBe("CURATOR_ROOM_CHOICE");
+
+    await post(webhookCallback(ADMIN_ID, "admin_schedule_curator_custom"));
+    expect((await getUserState(ADMIN_ID))?.state).toBe("ASK_CURATOR");
+
+    await post(webhookMessage(ADMIN_ID, "Вечерний куратор"));
+    let state = await getUserState(ADMIN_ID);
+    expect(state?.state).toBe("ASK_ROOM");
+    expect(state?.pending_extra).toBe(JSON.stringify({ weekday: 1, classHour: 18, classMinute: 0, opensHour: 17, opensMinute: 0, curator: "Вечерний куратор" }));
+
+    await post(webhookMessage(ADMIN_ID, "505"));
+    expect((await getUserState(ADMIN_ID))?.state).toBe("CONFIRM_SCHEDULE");
+
+    await post(webhookCallback(ADMIN_ID, "admin_schedule_confirm_yes"));
+    expect(await getUserState(ADMIN_ID)).toBeNull();
+
+    const row = await scheduleRow(1, 18);
+    expect(row!.curator).toBe("Вечерний куратор");
+    expect(row!.room).toBe("505");
+  });
+
+  it("an invalid time is rejected and re-prompted without losing the chosen weekday", async () => {
+    await post(webhookCallback(ADMIN_ID, "admin_schedule_add_start"));
+    await post(webhookCallback(ADMIN_ID, "admin_schedule_weekday:2")); // Wednesday
+    await post(webhookMessage(ADMIN_ID, "not a time"));
+    const state = await getUserState(ADMIN_ID);
+    expect(state?.state).toBe("ASK_CLASS_TIME"); // never advanced
+    expect(state?.pending_extra).toBe(JSON.stringify({ weekday: 2 })); // weekday preserved
+
+    await post(webhookCallback(ADMIN_ID, "admin_schedule_cancel"));
+    expect(await getUserState(ADMIN_ID)).toBeNull();
+  });
+
+  it("an empty curator name or room is rejected and re-prompted", async () => {
+    await post(webhookCallback(ADMIN_ID, "admin_schedule_add_start"));
+    await post(webhookCallback(ADMIN_ID, "admin_schedule_weekday:3"));
+    await post(webhookMessage(ADMIN_ID, "09:00"));
+    await post(webhookCallback(ADMIN_ID, "admin_schedule_curator_custom"));
+
+    await post(webhookMessage(ADMIN_ID, "   "));
+    expect((await getUserState(ADMIN_ID))?.state).toBe("ASK_CURATOR"); // never advanced
+
+    await post(webhookMessage(ADMIN_ID, "Куратор Ч"));
+    expect((await getUserState(ADMIN_ID))?.state).toBe("ASK_ROOM");
+
+    await post(webhookMessage(ADMIN_ID, ""));
+    expect((await getUserState(ADMIN_ID))?.state).toBe("ASK_ROOM"); // still stuck
+
+    await post(webhookCallback(ADMIN_ID, "admin_schedule_cancel"));
+    expect(await getUserState(ADMIN_ID)).toBeNull();
+  });
+
+  it("'Отмена' on the final confirm step creates nothing", async () => {
+    const before = await scheduleRow(4, 20);
+    expect(before).toBeNull();
+
+    await post(webhookCallback(ADMIN_ID, "admin_schedule_add_start"));
+    await post(webhookCallback(ADMIN_ID, "admin_schedule_weekday:4"));
+    await post(webhookMessage(ADMIN_ID, "20:00"));
+    await post(webhookCallback(ADMIN_ID, "admin_schedule_curator_default"));
+    await post(webhookCallback(ADMIN_ID, "admin_schedule_confirm_no"));
+
+    expect(await getUserState(ADMIN_ID)).toBeNull();
+    expect(await scheduleRow(4, 20)).toBeNull();
+  });
+
+  it("a non-admin gets no state change from any schedule callback", async () => {
+    await post(webhookCallback(NON_ADMIN_ID, "admin_schedule_add_start"));
+    expect(await getUserState(NON_ADMIN_ID)).toBeNull();
+  });
+
+  it("delete: pick -> confirm removes the entry from the schedule", async () => {
+    const id = await addScheduleEntry(env, {
+      name: "Удаляемая",
+      weekday: 6,
+      classHour: 12,
+      classMinute: 0,
+      opensHour: 11,
+      opensMinute: 0,
+    });
+
+    await post(webhookCallback(ADMIN_ID, `admin_schedule_delete_pick:${id}`));
+    await post(webhookCallback(ADMIN_ID, `admin_schedule_delete_yes:${id}`));
+
+    const row = await env.DB.prepare("SELECT id FROM weekly_schedule WHERE id = ?").bind(id).first();
+    expect(row).toBeNull();
+  });
+
+  it("delete: 'Нет' leaves the entry untouched", async () => {
+    const id = await addScheduleEntry(env, {
+      name: "Оставляемая",
+      weekday: 6,
+      classHour: 13,
+      classMinute: 0,
+      opensHour: 12,
+      opensMinute: 0,
+    });
+
+    await post(webhookCallback(ADMIN_ID, `admin_schedule_delete_pick:${id}`));
+    await post(webhookCallback(ADMIN_ID, "admin_schedule_delete_no"));
+
+    const row = await env.DB.prepare("SELECT id FROM weekly_schedule WHERE id = ?").bind(id).first();
+    expect(row).not.toBeNull();
+  });
+
+  it("deleting an id that no longer exists doesn't throw (safe no-op reply)", async () => {
+    await post(webhookCallback(ADMIN_ID, "admin_schedule_delete_pick:999999999"));
+    await post(webhookCallback(ADMIN_ID, "admin_schedule_delete_yes:999999999"));
+    // No throw, no 500 -- post() already asserted status 200.
+  });
+
+  it("the menu ('admin_schedule_menu') doesn't throw with entries present", async () => {
+    await post(webhookCallback(ADMIN_ID, "admin_schedule_menu"));
+    // No throw, no 500 -- the seeded Wed/Fri/Sat entries plus whatever this
+    // file added above are listed; content isn't observable from this
+    // harness beyond "it didn't crash".
   });
 });

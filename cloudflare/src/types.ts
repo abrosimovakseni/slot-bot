@@ -106,7 +106,7 @@ export interface SignupRow {
 
 export interface UserStateRow {
   telegram_user_id: number;
-  flow: "register" | "edit" | "admin_add" | "admin_edit_details";
+  flow: "register" | "edit" | "admin_add" | "admin_edit_details" | "admin_schedule";
   state:
     | "ASK_NAME"
     | "CONFIRM_NAME"
@@ -115,7 +115,10 @@ export interface UserStateRow {
     | "ASK_CURATOR"
     | "ASK_ROOM"
     | "CONFIRM_DATETIME"
-    | "CONFIRM_EDIT_DETAILS";
+    | "CONFIRM_EDIT_DETAILS"
+    | "ASK_WEEKDAY"
+    | "ASK_CLASS_TIME"
+    | "CONFIRM_SCHEDULE";
   pending_name: string | null;
   /** Second generic pending-value slot -- see migrations/0003's comment for
    * why one slot stopped being enough once the admin flows started

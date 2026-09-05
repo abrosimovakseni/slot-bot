@@ -35,11 +35,16 @@ Cloudflare Queues  --> Worker.queue()  --> D1 (notifications_sent) + Telegram se
 * **`fetch()`** -- the Telegram webhook endpoint (`POST /webhook`). Verifies
   the `X-Telegram-Bot-Api-Secret-Token` header, claims the update
   (`processed_updates`) so a Telegram retry is a no-op, then routes it.
-* **`scheduled()`** -- three Cron Triggers (see below) all call the same
-  `reconcile()`, which finalizes any past-due consultation and opens the
-  next one that's due. This is also what makes the bot self-healing after a
-  deploy or a missed tick: `reconcile()` never assumes anything about what
-  already happened, it only looks at D1's current state.
+* **`scheduled()`** -- the once-a-minute Cron Trigger (see below) calls
+  `reconcile()`, which reads the recurring weekly schedule from D1
+  (`src/db/schedule.ts` -- editable by the bot's own admin through the
+  "📅 Еженедельный график" menu, no code change needed), finalizes any
+  past-due consultation, and opens the next one that's due. This is also
+  what makes the bot self-healing after a deploy or a missed tick:
+  `reconcile()` never assumes anything about what already happened, it only
+  looks at D1's current state. A second, unrelated daily Cron Trigger
+  re-asserts the Telegram webhook registration (`index.ts`'s
+  `reassertWebhook()`) -- see that file's doc comment.
 * **`queue()`** -- consumes `NOTIFY_QUEUE`, actually calling Telegram's
   `sendMessage` and recording `notifications_sent` so a retried delivery
   never double-sends.
@@ -55,14 +60,18 @@ database or DST logic, just constant arithmetic (`src/timeUtils.ts`,
 always 06:30 UTC, so:
 
 ```toml
-crons = ["30 6 * * 3", "30 6 * * 5", "*/15 * * * *"]
-#         Wed 09:30 MSK  Fri 09:30 MSK  safety net, every 15 min, every day
+crons = ["0 2 * * *", "* * * * *"]
+#         webhook self-heal, once a day    the ONLY driver of the weekly schedule + safety net, every minute
 ```
 
-The safety-net tick exists so a missed or delayed precise trigger (a
-deploy in progress, a transient platform hiccup) still gets caught within
-15 minutes, using the exact same idempotent `reconcile()` path -- it can
-never duplicate or re-broadcast an already-opened slot.
+The once-a-minute tick is what actually creates/opens each weekly slot
+(reading the schedule from D1 -- there's no per-weekday cron entry any
+more, since the schedule itself is now admin-editable data, not static
+config), and doubles as the safety net for a missed or delayed tick (a
+deploy in progress, a transient platform hiccup), using the exact same
+idempotent `reconcile()` path -- it can never duplicate or re-broadcast an
+already-opened slot. Worst case this adds up to ~60s of delay versus a
+precise per-weekday trigger, which doesn't matter for a weekly class time.
 
 ## Why Queues (not a plain loop in the cron handler)
 

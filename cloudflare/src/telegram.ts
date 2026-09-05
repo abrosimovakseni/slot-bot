@@ -164,6 +164,7 @@ export function adminMenuKeyboard(): InlineKeyboardMarkup {
       [{ text: "➕ Добавить консультацию", callback_data: "admin_add_start" }],
       [{ text: "🗑 Отменить консультацию", callback_data: "admin_cancel_list" }],
       [{ text: "✏️ Изменить кабинет/куратора", callback_data: "admin_edit_details_start" }],
+      [{ text: "📅 Еженедельный график", callback_data: "admin_schedule_menu" }],
     ],
   };
 }
@@ -227,6 +228,73 @@ export function confirmEditDetailsKeyboard(consultationId: number): InlineKeyboa
       [
         { text: "Да", callback_data: `admin_edit_yes:${consultationId}` },
         { text: "Отмена", callback_data: `admin_edit_no:${consultationId}` },
+      ],
+    ],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Admin: weekly recurring schedule
+// ---------------------------------------------------------------------------
+const WEEKDAY_SHORT_NAMES = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+
+/** The list of current weekly slots, one row per entry (🗑 to delete it),
+ * plus an "➕ Добавить" row -- shown by admin_schedule_menu. */
+export function scheduleListKeyboard(items: Array<{ id: number; label: string }>): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      ...items.map((it) => [{ text: `🗑 ${it.label}`, callback_data: `admin_schedule_delete_pick:${it.id}` }]),
+      [{ text: "➕ Добавить", callback_data: "admin_schedule_add_start" }],
+    ],
+  };
+}
+
+/** Weekday picker, two rows of buttons (Пн..Пт, then Сб/Вс), for the "add a
+ * weekly slot" flow's first step -- picking a day from a keyboard is far
+ * less error-prone for a non-technical admin than typing one. */
+export function weekdayPickerKeyboard(): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      WEEKDAY_SHORT_NAMES.slice(0, 5).map((name, i) => ({ text: name, callback_data: `admin_schedule_weekday:${i}` })),
+      WEEKDAY_SHORT_NAMES.slice(5).map((name, i) => ({ text: name, callback_data: `admin_schedule_weekday:${i + 5}` })),
+      [{ text: "◀️ Отмена", callback_data: "admin_schedule_cancel" }],
+    ],
+  };
+}
+
+export function cancelAddScheduleKeyboard(): InlineKeyboardMarkup {
+  return { inline_keyboard: [[{ text: "◀️ Отмена", callback_data: "admin_schedule_cancel" }]] };
+}
+
+export function scheduleCuratorRoomChoiceKeyboard(): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [
+        { text: "Как обычно", callback_data: "admin_schedule_curator_default" },
+        { text: "Указать другое", callback_data: "admin_schedule_curator_custom" },
+      ],
+      [{ text: "◀️ Отмена", callback_data: "admin_schedule_cancel" }],
+    ],
+  };
+}
+
+export function confirmAddScheduleKeyboard(): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [
+        { text: "Да", callback_data: "admin_schedule_confirm_yes" },
+        { text: "Отмена", callback_data: "admin_schedule_confirm_no" },
+      ],
+    ],
+  };
+}
+
+export function confirmDeleteScheduleKeyboard(id: number): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [
+        { text: "Да, удалить", callback_data: `admin_schedule_delete_yes:${id}` },
+        { text: "Нет", callback_data: "admin_schedule_delete_no" },
       ],
     ],
   };
